@@ -19,26 +19,46 @@ class Executor(threading.Thread):
         sock.listen(10)  # The argument specifies the number of unaccepted connections that the system will allow before refusing new connections
         connection, client_address = sock.accept()
         print('Connected with a Client')
-        while True:
-            data = connection.recv(4096) # Receiving message from client
-            if not data:
-                # Once client sent data, we need to distinguish between messages (submit a job or retrieve the result)
-                print('Message arrived')
-                self.request = pickle.loads(data)
-                request_type = self.request.get_type()
-                print(f'request type : {request_type}')
+        # #while True:
+        #     print('Receiving data from client')
+        #     data = connection.recv(4096) # Receiving message from client
+        #     print(('Continue to receive data'))
+        #     if not data:
+        #         # Once client sent data, we need to distinguish between messages (submit a job or retrieve the result)
+        #         print('Message arrived')
+        #         self.request = pickle.loads(data)
+        #         request_type = self.request.get_type()
+        #         print(f'request type : {request_type}')
+        #
+        #         if request_type == "jobRequest":
+        #             # TODO return job_id to the client
+        #             print('job Request arrived')
+        #             message = 'job_id: 1234'
+        #             sock.send(message.encode(ENCODING))
+        #
+        #         if request_type == "resultRequest":
+        #             pass # Do something
+        #
+        #         #break
+        # connection.close()
 
-                if request_type == "jobRequest":
-                    # TODO return job_id to the client
-                    print('job Request arrived')
-                    message = 'job_id: 1234'
-                    sock.send(message.encode(ENCODING))
+        print('Receiving data from client')
+        data = connection.recv(4096) # Receiving message from client
+        print('Message arrived')
+        self.request = pickle.loads(data)
+        request_type = self.request.get_type()
+        print(f'request type : {request_type}')
 
-                if request_type == "resultRequest":
-                    pass # Do something
+        if request_type == "jobRequest":
+            # TODO add the job to the storage, retrieve the job_id (index of the dataframe) and return the job_id to the client
+            print('job Request arrived')
+            message = 'job_id: 1234'
+            connection.send(message.encode(ENCODING))
 
-                break
-        connection.close()
+        if request_type == "resultRequest":
+            # TODO check if the job is done or not, return the status/result of the job
+            pass # Do something
+
 
 
 if __name__ == '__main__':
