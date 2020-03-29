@@ -3,9 +3,9 @@ from Request.Request import Request
 
 class ResultRequest(Request):
 
-    def __init__(self):
+    def __init__(self, id):
         super().__init__(message_type='resultRequest')
-        self.job_id = ""
+        self.job_id = id
 
     def get_jobId(self):
         return self.job_id
