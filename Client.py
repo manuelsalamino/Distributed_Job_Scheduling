@@ -22,7 +22,7 @@ class Client(threading.Thread):
         self.jobs_completed = []   # pop from jobs_submitted and add the completed job the this list. Ogni elemento sarà: (job_id, result)
 
     def generate_request(self):
-        if not self.jobs_submitted and not self.jobs_completed:  # if it is the first action, it is a JobRequest # TODO ?? Perché aggiungere "and not self.jobs_completed"?
+        if not self.jobs_submitted:  # if it is the first action, it is a JobRequest
             job = Job()  # create the job
             request = JobRequest(job=job)
             print("request:     start new job")
@@ -34,9 +34,7 @@ class Client(threading.Thread):
                 request = JobRequest(job=job)
                 print("action:     start new job")
             else:
-                tmp = self.jobs_submitted + self.jobs_completed  # choose randomly a request already submitted # TODO ?? perché richiedere il risultato di un job completato?
-                random.shuffle(tmp)
-                tmp = tmp[0]
+                tmp = self.jobs_submitted[random.randrange(len(self.jobs_submitted))] # choose randomly a request already submitted
                 request = ResultRequest(tmp)
                 print("action:     result for job", tmp)
 
