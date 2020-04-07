@@ -8,6 +8,8 @@ class Job:
         self.execution_time = random.randrange(1, 30)
         self.status = 'ready'
         self.final_result = None
+        self.sent_to = ''
+        self.executed_by = ''
 
     def set_id(self, id):
         self.job_id = id
@@ -29,3 +31,14 @@ class Job:
             self.final_result = random.randint(0, 100)
         return self.final_result
 
+    def set_sent_to(self, executor):
+        self.sent_to = executor
+
+    def get_sent_to(self):
+        return self.sent_to
+
+    def set_executed_by(self, executor):
+        self.executed_by = executor
+
+    def get_executed_by(self):
+        return self.executed_by
