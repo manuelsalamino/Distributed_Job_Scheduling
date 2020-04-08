@@ -63,7 +63,7 @@ class Client(threading.Thread):
                     print("response:        the job is executing")
                 else:
                     index = self.jobs_submitted.index(request.get_jobId())
-                    self.jobs_completed.append( (self.jobs_submitted.pop(index), received_data) )
+                    self.jobs_completed.append((self.jobs_submitted.pop(index), received_data))
                     print("response:        ", received_data)
 
             print("submitted jobs: ", self.jobs_submitted)

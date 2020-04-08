@@ -25,6 +25,11 @@ class Executor(threading.Thread):
 
         - Definire gli stati di un job: waiting, executing, completed ?   [waiting nel senso che è nella lista con gli
                                                                             altri processi, ma non è ancora in esecuzione]
+
+        - Uno dei server deve far partire il token: per esempio, il server 0 lo fa sempre partire
+
+        - Ci sarebbe la possibilità di mettere, per esempio, il thread che aspetta il Token (oppure quello che esegue i jobs)
+            come un daemon invece che come un classico thread
     """
 
     """
@@ -35,58 +40,76 @@ class Executor(threading.Thread):
         
         - Un quarto thread potrebbe gestire il salvataggio delle informazioni in un file per la Fault Tolerance: 
             credo si possa supporre che mentre questo salvataggio è in atto, il server non possa fallire
+            
+    Forse per creare più thread basta soltanto fare in modo che i messaggi dal Client arrivino in una certa porta, mentre quelli
+    del token arrivino in un'altra porta ? 
     """
 
-    def __init__(self, my_host, my_port, id=0):
+    def __init__(self, my_host, my_port, id=0, next_ex_host='localhost', next_ex_port=8000):
         threading.Thread.__init__(self, name='server_' + str(id))
+        # Server
         self.host = my_host
         self.port = my_port
         self.id = id
-        self.jobs = []    # questa lista è brutta ma serve per avere un modo per accedere ai jobs per poter prendere i loro attributi (es execution_time)
-                    # TODO ?? Forse è meglio che self.jobs sia un dizionario del tipo: {job_id: job} ? In questo modo
-                    #  accediamo direttamente al job che ci interessa
 
-        self.running_jobs = {}    # {'job_id': starting_time}  # TODO ?? l'Executor può eseguire un job alla volta no? Perché un dizionario?
-        self.completed_jobs = {}       # {'job_id': result_value}
+        # Jobs # TODO probabilmente dobbiamo gestire l'accesso (sincronizzazione) da parte di più thread ad una stessa risorsa
+        self.jobs = {}      # {job_id : job}   I jobs verranno poppati una volta che la loro esecuzione è terminata
+        self.running_job = None
+        self.completed_jobs = {}  # {'job_id': result_value}
         self.job_counter = 0        # usato nella creazione del job_id
-        self.forwarded_jobs = []    # per tenere traccia dei jobs inoltrati ad altri executor. Ogni elemento è: (job_id, "server_host+server_port")
+        self.forwarded_jobs = {}    # per tenere traccia dei jobs inoltrati ad altri executor. Ogni elemento è: {job_id : "server_host+server_port")}
 
-    def check_complete_jobs(self):   # TODO ?? Non ho ben capito cosa fa questa funzione
-        for job in self.jobs:     # uso la lista brutta
-            if job.get_id() in self.running_jobs.keys() and time.time() - self.running_jobs[job.get_id()] > job.get_execution_time():
-                job.set_status('complete')
-                del self.running_jobs[job.get_id()]
-                self.completed_jobs[job.get_id()] = job.get_final_result()
+        # Token
+        self.next_executor_host = next_ex_host
+        self.next_executor_port = next_ex_port
+
+    def handle_jobRequest(self, request):
+        print('job Request arrived')
+        job = request.requested_job
+
+        # Set job_id
+        job_id = self.getName() + str(self.job_counter)
+        self.job_counter += 1
+        job.set_id(job_id)  # give the id to the job
+
+        job.set_sent_to(self.name)
+        job.set_status('waiting')
+
+        self.jobs[job_id] = job
+
+        # TODO Gestire il running_jobs a parte: ci sarà un thread che prende un job dalla queue self.jobs e cambia il suo stato e lo processa
+        # self.running_jobs[job_id] = time.time()  # add to the running_jobs list the new job with the corresponding starting time
+
+        message = str(job_id)  # the message is the job_id of the received job
+        return message
+
+    def handle_resultRequest(self, request):
+        print('result Request arrived')
+
+        self.check_complete_jobs()  # every time the client ask for a result, update the status of all the jobs
+
+        if int(request.get_jobId()) in self.running_jobs.keys():
+            message = "executing"
+        else:
+            message = 'The result is ' + str(self.completed_jobs[int(request.get_jobId())])
+
+        return message
+
+    def handle_token(self, request):
+        pass
 
     def process_request(self, request, connection):
         request_type = request.get_type()
         print(f'request type : {request_type}')
 
         if request_type == "jobRequest":
-
-            print('job Request arrived')
-            job = request.requested_job
-
-            # Set job_id
-            job_id = self.getName() + str(self.job_counter)
-            self.job_counter += 1
-            job.set_id(job_id)  # give the id to the job
-
-            job.set_sent_to(self.name)
-            job.set_status('executing') # TODO oppure si mette waiting?
-            self.jobs.append(job)
-            self.running_jobs[job_id] = time.time()  # add to the running_jobs list the new job with the corresponding starting time
-            message = str(job_id)  # the message is the job_id of the received job
+            message = self.handle_jobRequest(request)
 
         if request_type == "resultRequest":
-            print('result Request arrived')
+            message = self.handle_resultRequest(request)
 
-            self.check_complete_jobs()  # every time the client ask for a result, update the status of all the jobs
-
-            if int(request.get_jobId()) in self.running_jobs.keys():
-                message = "executing"
-            else:
-                message = 'The result is ' + str(self.completed_jobs[int(request.get_jobId())])
+        if request_type == 'token':
+            self.handle_token(request)
 
         connection.send(message.encode(ENCODING))
 
@@ -104,14 +127,14 @@ class Executor(threading.Thread):
             print('Message arrived')
             request = pickle.loads(data)
 
-            self.process_request(request, connection)
+            # self.process_request(request, connection)
+            thread = threading.Thread(target = self.process_request, args=(request, connection))
+            # TODO Facendo così probabilmente non serve che Executor estenda la classe threading.Thread
+
+            thread.start()
 
             connection.close()
             # break
-
-
-
-
 
 
 if __name__ == '__main__':
