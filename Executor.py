@@ -86,12 +86,15 @@ class Executor(threading.Thread):
     def handle_resultRequest(self, request):
         print('result Request arrived')
 
-        self.check_complete_jobs()  # every time the client ask for a result, update the status of all the jobs
+        job = self.jobs[request.get_jobId()]
 
-        if int(request.get_jobId()) in self.running_jobs.keys():
+        if job.get_status() == "waiting":
+            message = "waiting"
+        elif job.get_status() == "executing":
             message = "executing"
-        else:
-            message = 'The result is ' + str(self.completed_jobs[int(request.get_jobId())])
+        elif job.get_status() == "completed":    # TODO check consistency of states name ('completed', 'executing',...)
+            # TODO il risultato sarà già stato calcolato e aggiunto al Job appena l'esecuzione è terminata
+            message = self.completed_jobs[int(request.get_jobId())]
 
         return message
 
@@ -127,7 +130,7 @@ class Executor(threading.Thread):
             print('Message arrived')
             request = pickle.loads(data)
 
-            # self.process_request(request, connection)
+            self.process_request(request, connection)
             thread = threading.Thread(target = self.process_request, args=(request, connection))
             # TODO Facendo così probabilmente non serve che Executor estenda la classe threading.Thread
 
@@ -143,5 +146,6 @@ if __name__ == '__main__':
     my_port = int(input("which is my port? "))
     #my_port = 41
     my_id = int(input("Which is my id?"))
+    #my_id = 0
     executor = Executor(my_host, my_port, my_id)
     executor.start()
