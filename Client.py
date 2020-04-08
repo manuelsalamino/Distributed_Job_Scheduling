@@ -19,7 +19,7 @@ class Client(threading.Thread):
 
         # TODO visto che sono threads, queste due variabili vanno messe condivise tra i thread ?
         self.jobs_submitted = []   # add the returned job_id to the list
-        self.jobs_completed = []   # pop from jobs_submitted and add the completed job the this list. Ogni elemento sarà: (job_id, result)
+        self.jobs_completed = {}   # pop from jobs_submitted and add to this list. Element: {'job_id': result}
 
     def generate_request(self):
         if not self.jobs_submitted:  # if it is the first action, it is a JobRequest
@@ -59,12 +59,15 @@ class Client(threading.Thread):
                 self.jobs_submitted.append(received_data)
 
             if request.get_type() == 'resultRequest' and received_data is not None:
-                if received_data == "executing":
+                if received_data == "waiting":
+                    print("response:        the job is waiting")
+                elif received_data == "executing":
                     print("response:        the job is executing")
                 else:
                     index = self.jobs_submitted.index(request.get_jobId())
-                    self.jobs_completed.append((self.jobs_submitted.pop(index), received_data))
-                    print("response:        ", received_data)
+                    del self.jobs_submitted[index]
+                    self.jobs_completed[request.get_jobId()] = received_data
+                    print("response:      the result of the job is ", received_data)
 
             print("submitted jobs: ", self.jobs_submitted)
             print("completed jobs: ", self.jobs_completed)
