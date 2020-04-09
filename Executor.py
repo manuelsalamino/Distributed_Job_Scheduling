@@ -2,6 +2,7 @@ import socket
 import threading
 import pickle
 import time
+import collections
 
 ENCODING = 'utf-8'
 
@@ -56,9 +57,8 @@ class Executor(object):
         # Jobs # TODO probabilmente dobbiamo gestire l'accesso (sincronizzazione) da parte di più thread ad una stessa risorsa
 
         # TODO non si può usare un dizionario per i jobs perché poi non si può fare il pop e simulare una coda di accesso
-        self.jobs = {}      # {job_id : job}   I jobs verranno poppati una volta che la loro esecuzione è terminata
-        self.jobs_id = []   # TODO il problema è che non si può poppare da un dizionario, quindi prendiamo il rispettivo job_id da una lista e lo cerchiamo nel dizionario dei jobs
-        self.running_job = None
+        self.waiting_jobs = collections.OrderedDict()      # {job_id : job}   I jobs verranno poppati una volta che inizia la loro esecuzione
+        self.running_job = {}        # {job_id: job}    elemento singolo (può essere eseguito solo un job alla volta)
         self.completed_jobs = {}  # {'job_id': result_value}
         self.job_counter = 0        # usato nella creazione del job_id
         self.forwarded_jobs = {}    # per tenere traccia dei jobs inoltrati ad altri executor. Ogni elemento è: {job_id : "server_host+server_port")}
@@ -78,30 +78,27 @@ class Executor(object):
         job_id = self.getName() + str(self.job_counter)
         self.job_counter += 1
         job.set_id(job_id)  # give the id to the job
-        self.jobs_id.append(job_id)
 
         job.set_sent_to(self.name)
         job.set_status('waiting')
 
-        self.jobs[job_id] = job
-
-        # TODO Gestire il running_jobs a parte: ci sarà un thread che prende un job dalla queue self.jobs e cambia il suo stato e lo processa
-        # self.running_jobs[job_id] = time.time()  # add to the running_jobs list the new job with the corresponding starting time
-
+        self.waiting_jobs[job_id] = job
         message = str(job_id)  # the message is the job_id of the received job
+
         return message
 
     def handle_resultRequest(self, request):
         print('result Request arrived')
 
-        job = {**self.jobs, **self.completed_jobs}[request.get_jobId()]
+        job_id = request.get_jobId()
+        # job = {**self.jobs, **self.completed_jobs}[]
 
-        if job.get_status() == "waiting":
+        if job_id in self.waiting_jobs.keys():
             message = "waiting"
-        elif job.get_status() == "executing":
+        elif job_id in self.running_job.keys():
             message = "executing"
-        elif job.get_status() == "completed":    # TODO check consistency of states name ('completed', 'executing',...)
-            message = self.completed_jobs[request.get_jobId()]
+        elif job_id in self.completed_jobs.keys():
+            message = str(self.completed_jobs[job_id])
 
         return message
 
@@ -125,18 +122,25 @@ class Executor(object):
 
     def process_job(self):
         while True:
-            if self.jobs_id:
+            if self.waiting_jobs:
                 # Get the first job_id and load the corresponding job
-                j = self.jobs_id.pop()
-                print(f'Executing job: {j}')
-                self.running_job = self.jobs[j]
+                job_id, job = self.waiting_jobs.popitem(last=False)         # pop del primo elemento (il più "vecchio")
+                self.running_job[job_id] = job              # sposto il job
+                print(f'Executing job: {job_id}')          # print job_id
+                job.set_status("executing")             # set new status
 
                 # Execute the job
-                time.sleep(self.running_job.get_execution_time())
+                time.sleep(job.get_execution_time())
 
-                self.completed_jobs[j] = self.running_job.get_final_result()
-                del self.jobs[j]
-                print(f'Job: {j} completed')
+                # job execution complete
+                del self.running_job[job_id]          # delete job from dict
+                self.completed_jobs[job_id] = job.get_final_result()          # add result to dict
+                print(f'Job: {job_id} completed')
+
+            else:
+                time.sleep(1)       # altrimenti da controlli a vuoto (per non sovraccaricare il pc)
+                # TODO capire come fare la terminazione
+
 
 
     def run(self):
@@ -156,11 +160,12 @@ class Executor(object):
             data = connection.recv(4096)  # Receiving message from client
             print('Message arrived')
             request = pickle.loads(data)
+            print(request)
 
             thread = threading.Thread(target=self.process_request, args=(request, connection))
-
             thread.start()
-            print(threading.enumerate())
+
+            #print(threading.enumerate())
             # thread.join()
 
 
@@ -168,11 +173,11 @@ class Executor(object):
 
 
 if __name__ == '__main__':
-    my_host = input("which is my host? ")
-    #my_host = '127.0.0.1'
-    my_port = int(input("which is my port? "))
-    #my_port = 41
-    my_id = int(input("Which is my id?"))
-    #my_id = 0
+    #my_host = input("which is my host? ")
+    my_host = '127.0.0.1'
+    #my_port = int(input("which is my port? "))
+    my_port = 41
+    #my_id = int(input("Which is my id?"))
+    my_id = 0
     executor = Executor(my_host, my_port, my_id)
     executor.run()
