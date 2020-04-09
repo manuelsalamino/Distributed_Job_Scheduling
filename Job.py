@@ -29,6 +29,7 @@ class Job:
     def get_final_result(self):
         if self.final_result is None:   # if the result was not computed yet, compute it (simulation)
             self.final_result = random.randint(0, 100)
+        self.status = 'completed'
         return self.final_result
 
     def set_sent_to(self, executor):

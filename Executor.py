@@ -6,7 +6,7 @@ import time
 ENCODING = 'utf-8'
 
 
-class Executor(threading.Thread):
+class Executor(object):
 
 
     """Commenti su possibili strategie e task da implementare
@@ -46,14 +46,18 @@ class Executor(threading.Thread):
     """
 
     def __init__(self, my_host, my_port, id=0, next_ex_host='localhost', next_ex_port=8000):
-        threading.Thread.__init__(self, name='server_' + str(id))
+        #threading.Thread.__init__(self, name='server_' + str(id))
         # Server
         self.host = my_host
         self.port = my_port
         self.id = id
+        self.name = 'server_' + str(id)
 
         # Jobs # TODO probabilmente dobbiamo gestire l'accesso (sincronizzazione) da parte di più thread ad una stessa risorsa
+
+        # TODO non si può usare un dizionario per i jobs perché poi non si può fare il pop e simulare una coda di accesso
         self.jobs = {}      # {job_id : job}   I jobs verranno poppati una volta che la loro esecuzione è terminata
+        self.jobs_id = []   # TODO il problema è che non si può poppare da un dizionario, quindi prendiamo il rispettivo job_id da una lista e lo cerchiamo nel dizionario dei jobs
         self.running_job = None
         self.completed_jobs = {}  # {'job_id': result_value}
         self.job_counter = 0        # usato nella creazione del job_id
@@ -63,6 +67,9 @@ class Executor(threading.Thread):
         self.next_executor_host = next_ex_host
         self.next_executor_port = next_ex_port
 
+    def getName(self):
+        return self.name
+
     def handle_jobRequest(self, request):
         print('job Request arrived')
         job = request.requested_job
@@ -71,6 +78,7 @@ class Executor(threading.Thread):
         job_id = self.getName() + str(self.job_counter)
         self.job_counter += 1
         job.set_id(job_id)  # give the id to the job
+        self.jobs_id.append(job_id)
 
         job.set_sent_to(self.name)
         job.set_status('waiting')
@@ -86,15 +94,14 @@ class Executor(threading.Thread):
     def handle_resultRequest(self, request):
         print('result Request arrived')
 
-        job = self.jobs[request.get_jobId()]
+        job = {**self.jobs, **self.completed_jobs}[request.get_jobId()]
 
         if job.get_status() == "waiting":
             message = "waiting"
         elif job.get_status() == "executing":
             message = "executing"
         elif job.get_status() == "completed":    # TODO check consistency of states name ('completed', 'executing',...)
-            # TODO il risultato sarà già stato calcolato e aggiunto al Job appena l'esecuzione è terminata
-            message = self.completed_jobs[int(request.get_jobId())]
+            message = self.completed_jobs[request.get_jobId()]
 
         return message
 
@@ -116,7 +123,27 @@ class Executor(threading.Thread):
 
         connection.send(message.encode(ENCODING))
 
+    def process_job(self):
+        while True:
+            if self.jobs_id:
+                # Get the first job_id and load the corresponding job
+                j = self.jobs_id.pop()
+                print(f'Executing job: {j}')
+                self.running_job = self.jobs[j]
+
+                # Execute the job
+                time.sleep(self.running_job.get_execution_time())
+
+                self.completed_jobs[j] = self.running_job.get_final_result()
+                del self.jobs[j]
+                print(f'Job: {j} completed')
+
+
     def run(self):
+
+        worker = threading.Thread(target=self.process_job)
+        worker.start()
+
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.bind((self.host, self.port))
         sock.listen(10)  # The argument specifies the number of unaccepted connections that the system will allow before refusing new connection
@@ -130,13 +157,14 @@ class Executor(threading.Thread):
             print('Message arrived')
             request = pickle.loads(data)
 
-            self.process_request(request, connection)
-            thread = threading.Thread(target = self.process_request, args=(request, connection))
+            thread = threading.Thread(target=self.process_request, args=(request, connection))
             # TODO Facendo così probabilmente non serve che Executor estenda la classe threading.Thread
 
             thread.start()
+            print(threading.enumerate())
+            # thread.join()
 
-            connection.close()
+
             # break
 
 
@@ -148,4 +176,4 @@ if __name__ == '__main__':
     my_id = int(input("Which is my id?"))
     #my_id = 0
     executor = Executor(my_host, my_port, my_id)
-    executor.start()
+    executor.run()

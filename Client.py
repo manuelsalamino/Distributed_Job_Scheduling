@@ -42,7 +42,13 @@ class Client(threading.Thread):
 
     def run(self):
 
-        for i in range(10):
+
+        # TODO mi sa che dobbiamo mettere una specie di while True anche qui perché altrimenti il Client manda le N
+        #  richieste specificate nel for e una volta mandate si chiude. In realtà dovrebbe mandare richieste finché non
+        #  ha jobs_sumbitted vuoto e jobs_completed pieno: dovremmo quindi fare in modo che il client mandi tot
+        #  richieste di JobRequest e, una volta mandate, inizi a mandare solo richieste di tipo resultRequest in modo
+        #  da prendere i risultati dei job che ha submittato
+        for i in range(1):
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             s.connect((self.host, self.port))  # Connection to the server
 
