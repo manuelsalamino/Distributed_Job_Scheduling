@@ -35,6 +35,7 @@ class Client(threading.Thread):
                 job = Job()     # create the job
                 request = JobRequest(job=job)
                 print("action:     start new job")
+                self.job_count -= 1
             else:
                 tmp = self.jobs_submitted[random.randrange(len(self.jobs_submitted))] # choose randomly a request already submitted
                 request = ResultRequest(tmp)
