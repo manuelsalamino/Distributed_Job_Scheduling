@@ -158,7 +158,6 @@ class Executor(object):
             request = pickle.loads(data)
 
             thread = threading.Thread(target=self.process_request, args=(request, connection))
-            # TODO Facendo così probabilmente non serve che Executor estenda la classe threading.Thread
 
             thread.start()
             print(threading.enumerate())
