@@ -12,7 +12,7 @@ ENCODING = 'utf-8'
 
 class Client(threading.Thread):
 
-    def __init__(self, server_host, server_port, name='client'):
+    def __init__(self, server_host, server_port, n_jobs, name='client'):
         threading.Thread.__init__(self, name=name)
         self.host = server_host
         self.port = server_port
@@ -20,14 +20,16 @@ class Client(threading.Thread):
         # TODO visto che sono threads, queste due variabili vanno messe condivise tra i thread ?
         self.jobs_submitted = []   # add the returned job_id to the list
         self.jobs_completed = {}   # pop from jobs_submitted and add to this list. Element: {'job_id': result}
+        self.job_count = n_jobs
 
     def generate_request(self):
-        if not self.jobs_submitted:  # if it is the first action, it is a JobRequest
+        if not self.jobs_submitted and self.job_count > 0:  # if it is the first action, it is a JobRequest
             job = Job()  # create the job
             request = JobRequest(job=job)
             print("request:     start new job")
+            self.job_count -= 1
 
-        else:
+        elif self.job_count > 0:
             type_of_message = random.randint(0, 1)  # 0: send a new request; 1: check an already submitted request
             if type_of_message == 0:
                 job = Job()     # create the job
@@ -37,18 +39,17 @@ class Client(threading.Thread):
                 tmp = self.jobs_submitted[random.randrange(len(self.jobs_submitted))] # choose randomly a request already submitted
                 request = ResultRequest(tmp)
                 print("action:     result for job", tmp)
+        else:
+            tmp = self.jobs_submitted[random.randrange(len(self.jobs_submitted))]  # choose randomly a request already submitted
+            request = ResultRequest(tmp)
+            print("action:     result for job", tmp)
 
         return request
 
     def run(self):
 
-
-        # TODO mi sa che dobbiamo mettere una specie di while True anche qui perché altrimenti il Client manda le N
-        #  richieste specificate nel for e una volta mandate si chiude. In realtà dovrebbe mandare richieste finché non
-        #  ha jobs_sumbitted vuoto e jobs_completed pieno: dovremmo quindi fare in modo che il client mandi tot
-        #  richieste di JobRequest e, una volta mandate, inizi a mandare solo richieste di tipo resultRequest in modo
-        #  da prendere i risultati dei job che ha submittato
-        for i in range(1):
+        n = self.job_count
+        while len(self.jobs_completed) < n:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             s.connect((self.host, self.port))  # Connection to the server
 
@@ -88,5 +89,6 @@ if __name__ == '__main__':
     #server_host = '127.0.0.1'
     server_port = int(input("what is server's port?"))
     #server_port = 41
-    sender = Client(server_host, server_port)
+    n_jobs = int(input("How many jobs?"))
+    sender = Client(server_host, server_port, n_jobs)
     sender.start()
