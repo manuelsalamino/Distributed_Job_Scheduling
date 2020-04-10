@@ -132,10 +132,12 @@ class Executor(object):
         # Forward jobs
         if len(forwarding_candidates) > 0:
             for k, v in forwarding_candidates.items():
-                print(f'Forwarding jobs to {k}')
+                print(f'Forwarding {v} jobs to {k}')
                 k = k.split(':')
                 address, port = k[0], k[1]
 
+
+                print(f'')
                 # Create ForwardJob message to pack the jobs and send the message
                 job_to_forward = {}
                 for i in range(v):
@@ -176,7 +178,7 @@ class Executor(object):
         token_sock.close()
 
     def handle_forwardedJob(self, dict_of_jobs):
-        for k, v in dict_of_jobs:
+        for k, v in dict_of_jobs.items():
             self.waiting_jobs[k] = v
 
         return 'ok' # ACK
@@ -232,11 +234,6 @@ class Executor(object):
     def run(self):
 
         # TODO se l'id del server è == 0, crea l'oggetto Token, aspetta un po e fallo partire
-        if self.id == 0:
-            time.sleep(60)
-            token = Token(2)
-            self.handle_token(token)
-
 
         worker = threading.Thread(target=self.process_job)
         worker.start()
@@ -244,6 +241,11 @@ class Executor(object):
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.bind((self.host, self.port))
         sock.listen(10)  # The argument specifies the number of unaccepted connections that the system will allow before refusing new connection
+
+        if self.id == 0:
+            token = Token(2)
+            time.sleep(60)      # TODO spostare questo
+            self.handle_token(token)
 
         while True:
             connection, client_address = sock.accept()
