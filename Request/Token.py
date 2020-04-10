@@ -32,6 +32,18 @@ class Token(Request):
         self.df.loc[host_id, 'n_jobs'] = current_jobs
 
     def check_possible_forwarding(self, host_id):
+        """
+        Per guardare a quale Executor mandare N jobs, si calcola la media definita dai valori salvati nel token, per ogni valore
+        della colonna n_jobs si sottrae la media:
+                            n_jobs - mean
+        Considerando l'Executor che ha attualmente il token, si hanno 2 possibilità :
+            -  n_jobs - mean <= 0 : L'Executor è bilanciato (= 0, ovvero ha un numero di jobs = alla media dei jobs) o sbilanciato in negativo
+                ( < 0, dunque gli servirebbero dei jobs per averne un numero più vicino alla media ). In questo caso l'Executor non inoltra jobs
+            - n_jobs - mean > 0: l'Executor è sbilanciato in positivo, dunque deve/può dare dei jobs agli altri Executor che sono sbilanciati
+                in negativo
+        :param host_id:
+        :return:
+        """
         num_jobs_to_forward = {}   # {'ip:port' : n_job_to_be_forwarded} Indica l'address del server a cui mandare tot jobs
         curr_df = self.df[~self.df['n_jobs'].isna()]
         if curr_df.shape[0] > 1:
