@@ -3,6 +3,8 @@ import threading
 import pickle
 import time
 import collections
+from Request.ForwardJob import ForwardJob
+from Request.Token import Token
 
 ENCODING = 'utf-8'
 
@@ -31,6 +33,13 @@ class Executor(object):
 
         - Ci sarebbe la possibilità di mettere, per esempio, il thread che aspetta il Token (oppure quello che esegue i jobs)
             come un daemon invece che come un classico thread
+
+        - Un problema può essere che il token viaggi più velocemente dell'invio dei messaggi di forwardJob, forse dovremmo
+            aspettare un po' prima di far partire il token al prossimo executor.
+
+        - Fault Tolerance: probabilmente dobbiamo mettere un try: except: ogni volta che mandiamo un messaggio
+
+        - La comunicazione è affidabile, ma cosa vuol dire? Dobbiamo assumere che qualsiasi messaggio inviato arrivi a destinazione?
     """
 
     """
@@ -47,12 +56,19 @@ class Executor(object):
     """
 
     def __init__(self, my_host, my_port, id=0, next_ex_host='localhost', next_ex_port=8000):
-        #threading.Thread.__init__(self, name='server_' + str(id))
+        """
+
+        :param my_host: server ip
+        :param my_port: server port
+        :param id:  server id
+        :param next_ex_host: Executor ip a cui è in comunicazione. La struttura è un Ring, ogni server sarà connesso solo con il successivo server
+        :param next_ex_port:  Executor port a cui è in comunicazione
+        """
         # Server
         self.host = my_host
         self.port = my_port
         self.id = id
-        self.name = 'server_' + str(id)
+        self.name = self.host + ':' + str(self.port) + '_' + str(id)
 
         # Jobs # TODO probabilmente dobbiamo gestire l'accesso (sincronizzazione) da parte di più thread ad una stessa risorsa
 
@@ -103,7 +119,69 @@ class Executor(object):
         return message
 
     def handle_token(self, request):
-        pass
+        # TODO gestire l'accesso dei vari thread a self.waiting_jobs.
+        # TODO prima di inviare il messaggio forwardJob, fare un check per vedere se effettivamente c'é il numero di messaggi richiesti in self.waiting_jobs
+        print('Token arrived')
+
+        # Update its attributes in the token
+        request.update(self.host + ':' + str(self.port), self.id, len(self.waiting_jobs))
+
+        # Check if the server can forward some jobs
+        forwarding_candidates = request.check_possible_forwarding(self.id)
+
+        # Forward jobs
+        if len(forwarding_candidates) > 0:
+            for k, v in forwarding_candidates.items():
+                print(f'Forwarding jobs to {k}')
+                k = k.split(':')
+                address, port = k[0], k[1]
+
+                # Create ForwardJob message to pack the jobs and send the message
+                job_to_forward = {}
+                for i in range(v):
+                    job_id, job = self.waiting_jobs.popitem(last=True)   # Prendiamo gli ultimi job aggiunti alla queue
+                    # TODO Fault Tolerance: aggiugere i job a questo dizionario solo quando si è ricevuto l'ack
+                    self.forwarded_jobs[job_id] = 'waiting'         # Questo dizionario verrà aggiornato quando l'Executor, a cui sono stati inoltrati i jobs,
+                                                                    # avrà finito uno dei job e manderà il risultato che verrà scritto direttamente qui [spiegato meglio sopra]
+                    job_to_forward[job_id] = job
+
+                forwardJob = ForwardJob(job_to_forward)
+
+                message = pickle.dumps(forwardJob, protocol=pickle.HIGHEST_PROTOCOL)
+
+                forwarding_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                forwarding_sock.connect((address, int(port)))
+
+                forwarding_sock.sendall(message)
+
+                # TODO Fault Tolerance: aspettare per tot tempo un ACK: ci sarà una funzione di recv che ti permette di
+                #  avere un timeout dopo il quale rinvii il messaggio.
+                #  Alternativa: Salvarsi i messaggi forwardJob in un dizionario {'ip:port dell'Executor a cui inoltriamo' : forwardJob }.
+                #  L'Executor che riceve questo messaggio forwardJob risponderà con un messaggio (ACK) con il proprio
+                #  'ip:port' in modo da poter andare  direttamente a cancellare il dizionario quando il job è stato ricevuto.
+                ack = forwarding_sock.recv(4096) # wait for the ACK
+                if ack == 'ok':
+                    print('ACK arrivato')
+
+                forwarding_sock.close()
+        else:
+            print('Network is balanced ')
+
+        # forward the token to the next Executor
+        time.sleep(3) # Ritardo nell'invio, giusto per provare
+        token = pickle.dumps(request)
+        token_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        token_sock.connect((self.next_executor_host, self.next_executor_port))
+        token_sock.sendall(token)
+        token_sock.close()
+
+    def handle_forwardedJob(self, dict_of_jobs):
+        for k, v in dict_of_jobs:
+            self.waiting_jobs[k] = v
+
+        return 'ok' # ACK
+
+        # TODO Quando questi jobs sono completati, mandare il risultato al server da cui provenivano [specificato nel job_id]
 
     def process_request(self, request, connection):
         request_type = request.get_type()
@@ -111,14 +189,23 @@ class Executor(object):
 
         if request_type == "jobRequest":
             message = self.handle_jobRequest(request)
+            connection.send(message.encode(ENCODING))
+            #connection.close()
 
         if request_type == "resultRequest":
             message = self.handle_resultRequest(request)
+            connection.send(message.encode(ENCODING))
+            # connection.close()
 
         if request_type == 'token':
+            # TODO probabilmente qui la connessione dobbiamo chiuderla perché non ci interessa mandare messaggi a quello che ci ha inviato il token
+            connection.close()
             self.handle_token(request)
 
-        connection.send(message.encode(ENCODING))
+        if request_type == 'forwardJob':
+            message = self.handle_forwardedJob(request.get_forwarding_job())
+            # connection.send(message.encode(ENCODING)) # ACK message
+            connection.close()
 
     def process_job(self):
         while True:
@@ -138,12 +225,18 @@ class Executor(object):
                 print(f'Job: {job_id} completed')
 
             else:
-                time.sleep(1)       # altrimenti da controlli a vuoto (per non sovraccaricare il pc)
+                time.sleep(2)       # altrimenti da controlli a vuoto (per non sovraccaricare il pc)
                 # TODO capire come fare la terminazione
 
 
-
     def run(self):
+
+        # TODO se l'id del server è == 0, crea l'oggetto Token, aspetta un po e fallo partire
+        if self.id == 0:
+            time.sleep(60)
+            token = Token(2)
+            self.handle_token(token)
+
 
         worker = threading.Thread(target=self.process_job)
         worker.start()
@@ -173,11 +266,13 @@ class Executor(object):
 
 
 if __name__ == '__main__':
-    #my_host = input("which is my host? ")
-    my_host = '127.0.0.1'
-    #my_port = int(input("which is my port? "))
-    my_port = 41
-    #my_id = int(input("Which is my id?"))
-    my_id = 0
-    executor = Executor(my_host, my_port, my_id)
+    my_host = input("which is my host? ")
+    #my_host = '127.0.0.1'
+    my_port = int(input("which is my port? "))
+    #my_port = 8881
+    my_id = int(input("Which is my id?"))
+    #my_id = 0
+    next_executor_ip = input("Next Executor IP?")
+    next_executor_port = int(input("Next Executor port?"))
+    executor = Executor(my_host=my_host, my_port=my_port, id=my_id, next_ex_host=next_executor_ip, next_ex_port=next_executor_port)
     executor.run()

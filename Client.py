@@ -80,7 +80,7 @@ class Client(threading.Thread):
             print("submitted jobs: ", self.jobs_submitted)
             print("completed jobs: ", self.jobs_completed)
             print("")
-            time.sleep(2)
+            time.sleep(4)
 
 
 
