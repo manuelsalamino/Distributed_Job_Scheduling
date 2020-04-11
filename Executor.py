@@ -90,7 +90,7 @@ class Executor(object):
         return self.name
 
     def handle_jobRequest(self, request):
-        print('job Request arrived')
+        print('\tjob Request arrived')
         job = request.requested_job
 
         # Set job_id
@@ -108,7 +108,7 @@ class Executor(object):
         return message
 
     def handle_resultRequest(self, request):
-        print('result Request arrived')
+        print('\tresult Request arrived')
 
         job_id = request.get_jobId()
         message = 'waiting'  # Ogni tanto mi dà questo problema: "UnboundLocalError: local variable 'message' referenced before assigment"
@@ -128,10 +128,10 @@ class Executor(object):
         # TODO prima di inviare il messaggio forwardJob, fare un check per vedere se effettivamente c'é il numero di messaggi richiesti in self.waiting_jobs
         # TODO per gestire l'accesso in questo caso, forse è meglio mettere tutto handle_token in lock in process_request() ?
 
-        print('Token arrived')
+        print('\nToken received')
 
         # Update its attributes in the token
-        request.update(self.host + ':' + str(self.port), self.id, len(self.waiting_jobs))
+        request.update(self.host + ':' + str(self.port), self.id, len(self.waiting_jobs) + len(self.running_job))
 
         # Check if the server can forward some jobs
         forwarding_candidates = request.check_possible_forwarding(self.id)
@@ -139,7 +139,7 @@ class Executor(object):
         # Forward jobs
         if len(forwarding_candidates) > 0:
             for k, v in forwarding_candidates.items():
-                print(f'Forwarding {v} jobs to {k}')
+                print(f'\tForwarding {v} jobs to {k}')
                 k = k.split(':')
                 address, port = k[0], k[1]
 
@@ -152,7 +152,7 @@ class Executor(object):
                                                                     # avrà finito uno dei job e manderà il risultato che verrà scritto direttamente qui [spiegato meglio sopra]
                     job_to_forward[job_id] = job
 
-                print(f'Forwarding jobs: {job_to_forward.keys()}')
+                print(f'\tForwarding jobs: {job_to_forward.keys()}')
                 forwardJob = ForwardJob(job_to_forward)
 
                 message = pickle.dumps(forwardJob, protocol=pickle.HIGHEST_PROTOCOL)
@@ -170,11 +170,11 @@ class Executor(object):
 
                 ack = forwarding_sock.recv(4096) # wait for the ACK
                 if ack == 'ok':
-                    print('ACK arrivato')
+                    print('\tACK arrivato')
 
                 forwarding_sock.close()
         else:
-            print('Network is balanced ')
+            print('\tNetwork is balanced ')
 
         # forward the token to the next Executor
         time.sleep(3) # Ritardo nell'invio, giusto per provare
@@ -182,14 +182,15 @@ class Executor(object):
         token_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         token_sock.connect((self.next_executor_host, self.next_executor_port))
         token_sock.sendall(token)
+        print(f'Token sent to {self.next_executor_host}:{self.next_executor_port}\n')
         token_sock.close()
 
     def handle_forwardedJob(self, dict_of_jobs):
-        print(f'Before receive jobs: {self.waiting_jobs.keys()}')
+        print(f'\tBefore receive jobs: {self.waiting_jobs.keys()}')
         for k, v in dict_of_jobs.items():
             self.waiting_jobs[k] = v
 
-        print(f'After receive jobs: {self.waiting_jobs.keys()}')
+        print(f'\tAfter receive jobs: {self.waiting_jobs.keys()}')
         return 'ok' # ACK
 
     def handle_sendResult(self, request):
@@ -200,13 +201,13 @@ class Executor(object):
         """
 
         job_id, result = request.getJobId_Result()
-        print(f'Received result of forwarded job: {job_id} : {result}')
+        print(f'\tReceived result of forwarded job: {job_id} : {result}')
         self.completed_jobs[job_id] = result
         del self.forwarded_jobs[job_id]
 
     def process_request(self, request, connection):
         request_type = request.get_type()
-        print(f'request type : {request_type}')
+        print(f'\trequest type : {request_type}')
 
         if request_type == "jobRequest":
             message = self.handle_jobRequest(request)
@@ -240,7 +241,7 @@ class Executor(object):
                 job_id, job = self.waiting_jobs.popitem(last=False)         # pop del primo elemento (il più "vecchio")
 
                 self.running_job[job_id] = job              # sposto il job
-                print(f'Executing job: {job_id}')          # print job_id
+                print(f'\tExecuting job: {job_id}')          # print job_id
                 job.set_status("executing")             # set new status
 
                 # Execute the job
@@ -262,11 +263,12 @@ class Executor(object):
                     sendRes_sock.connect((addr, int(port)))
 
                     sendRes_sock.sendall(res_message)
+                    print(f'forwarded job {job_id} completed --> Result : {result}')
 
-                print(f'Job: {job_id} completed --> Result : {result}')
+                print(f'\tJob: {job_id} completed --> Result : {result}')
 
             else:
-                time.sleep(2)       # altrimenti da controlli a vuoto (per non sovraccaricare il pc)
+                time.sleep(2)       # altrimenti fa controlli a vuoto (per non sovraccaricare il pc)
                 # TODO capire come fare la terminazione
 
 
@@ -285,19 +287,19 @@ class Executor(object):
 
         while True:
             connection, client_address = sock.accept()
-            print(f'Connected with Client {client_address[0]} : {client_address[1]}')
+            #print(f'Connected with Client {client_address[0]} : {client_address[1]}')
 
-            print('Receiving data from client...')
+            #print('Receiving data from client...')
             data = connection.recv(4096)  # Receiving message from client
-            print('Message arrived')
+            #print('Message arrived')
             request = pickle.loads(data)
-            print(request)
+            #print(request)
 
             thread = threading.Thread(target=self.process_request, args=(request, connection))
             thread.start()
+            thread.join()
 
-            #print(threading.enumerate())
-            # thread.join()
+            print(f'\n\trunning: {self.running_job.keys()}\n\twaiting: {self.waiting_jobs.keys()}\n')
 
 
             # break
@@ -318,7 +320,7 @@ if __name__ == '__main__':
     # Create the network
 
     my_host = '127.0.0.1'
-    my_id =  int(input("Which is my id?"))
+    my_id = int(input("Which is my id?"))
 
     if my_id == 0:
         executor = Executor(my_host=my_host, my_port=8881, id=my_id, next_ex_host=my_host,
