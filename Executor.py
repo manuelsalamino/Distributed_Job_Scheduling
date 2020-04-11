@@ -5,6 +5,7 @@ import time
 import collections
 from Request.ForwardJob import ForwardJob
 from Request.Token import Token
+from Request.SendResult import SendResult
 
 ENCODING = 'utf-8'
 
@@ -51,8 +52,6 @@ class Executor(object):
         - Un quarto thread potrebbe gestire il salvataggio delle informazioni in un file per la Fault Tolerance: 
             credo si possa supporre che mentre questo salvataggio è in atto, il server non possa fallire
             
-    Forse per creare più thread basta soltanto fare in modo che i messaggi dal Client arrivino in una certa porta, mentre quelli
-    del token arrivino in un'altra porta ? 
     """
 
     def __init__(self, my_host, my_port, id=0, next_ex_host='localhost', next_ex_port=8000):
@@ -68,11 +67,12 @@ class Executor(object):
         self.host = my_host
         self.port = my_port
         self.id = id
-        self.name = self.host + ':' + str(self.port) + '_' + str(id)
+        self.name = self.host + ':' + str(self.port)
 
-        # Jobs # TODO probabilmente dobbiamo gestire l'accesso (sincronizzazione) da parte di più thread ad una stessa risorsa
+        """
+        - Controllo accesso risorse: dict e liste sono thread-safe in Python, mentre OrderedDict non lo è
+        """
 
-        # TODO non si può usare un dizionario per i jobs perché poi non si può fare il pop e simulare una coda di accesso
         self.waiting_jobs = collections.OrderedDict()      # {job_id : job}   I jobs verranno poppati una volta che inizia la loro esecuzione
         self.running_job = {}        # {job_id: job}    elemento singolo (può essere eseguito solo un job alla volta)
         self.completed_jobs = {}  # {'job_id': result_value}
@@ -83,6 +83,9 @@ class Executor(object):
         self.next_executor_host = next_ex_host
         self.next_executor_port = next_ex_port
 
+        # Locks
+        self.waiting_jobs_locks = threading.Lock()    # OrderedDict non è thread-safe # TODO regolare accesso a self.waiting_jobs
+
     def getName(self):
         return self.name
 
@@ -91,7 +94,7 @@ class Executor(object):
         job = request.requested_job
 
         # Set job_id
-        job_id = self.getName() + str(self.job_counter)
+        job_id = self.getName() + '_' + str(self.job_counter)
         self.job_counter += 1
         job.set_id(job_id)  # give the id to the job
 
@@ -99,6 +102,7 @@ class Executor(object):
         job.set_status('waiting')
 
         self.waiting_jobs[job_id] = job
+
         message = str(job_id)  # the message is the job_id of the received job
 
         return message
@@ -107,7 +111,9 @@ class Executor(object):
         print('result Request arrived')
 
         job_id = request.get_jobId()
-        # job = {**self.jobs, **self.completed_jobs}[]
+        message = 'waiting'  # Ogni tanto mi dà questo problema: "UnboundLocalError: local variable 'message' referenced before assigment"
+                             # Sembra che in certi momenti non entri in nessuno di quegli if, dunque non crea nessun 'message'.
+                             # Probabilmente è per una questione di accesso multiplo di più thread ad una stessa variabile
 
         if job_id in self.waiting_jobs.keys():
             message = "waiting"
@@ -119,8 +125,9 @@ class Executor(object):
         return message
 
     def handle_token(self, request):
-        # TODO gestire l'accesso dei vari thread a self.waiting_jobs.
         # TODO prima di inviare il messaggio forwardJob, fare un check per vedere se effettivamente c'é il numero di messaggi richiesti in self.waiting_jobs
+        # TODO per gestire l'accesso in questo caso, forse è meglio mettere tutto handle_token in lock in process_request() ?
+
         print('Token arrived')
 
         # Update its attributes in the token
@@ -136,17 +143,16 @@ class Executor(object):
                 k = k.split(':')
                 address, port = k[0], k[1]
 
-
-                print(f'')
                 # Create ForwardJob message to pack the jobs and send the message
+                # TODO Thread-safe : gestire accesso a self.waiting_jobs
                 job_to_forward = {}
                 for i in range(v):
                     job_id, job = self.waiting_jobs.popitem(last=True)   # Prendiamo gli ultimi job aggiunti alla queue
-                    # TODO Fault Tolerance: aggiugere i job a questo dizionario solo quando si è ricevuto l'ack
                     self.forwarded_jobs[job_id] = 'waiting'         # Questo dizionario verrà aggiornato quando l'Executor, a cui sono stati inoltrati i jobs,
                                                                     # avrà finito uno dei job e manderà il risultato che verrà scritto direttamente qui [spiegato meglio sopra]
                     job_to_forward[job_id] = job
 
+                print(f'Forwarding jobs: {job_to_forward.keys()}')
                 forwardJob = ForwardJob(job_to_forward)
 
                 message = pickle.dumps(forwardJob, protocol=pickle.HIGHEST_PROTOCOL)
@@ -156,11 +162,12 @@ class Executor(object):
 
                 forwarding_sock.sendall(message)
 
-                # TODO Fault Tolerance: aspettare per tot tempo un ACK: ci sarà una funzione di recv che ti permette di
-                #  avere un timeout dopo il quale rinvii il messaggio.
+                # TODO Fault Tolerance:
+                #  aspettare per tot tempo un ACK: ci sarà una funzione di recv che ti permette di avere un timeout dopo il quale rinvii il messaggio.
                 #  Alternativa: Salvarsi i messaggi forwardJob in un dizionario {'ip:port dell'Executor a cui inoltriamo' : forwardJob }.
                 #  L'Executor che riceve questo messaggio forwardJob risponderà con un messaggio (ACK) con il proprio
                 #  'ip:port' in modo da poter andare  direttamente a cancellare il dizionario quando il job è stato ricevuto.
+
                 ack = forwarding_sock.recv(4096) # wait for the ACK
                 if ack == 'ok':
                     print('ACK arrivato')
@@ -178,12 +185,24 @@ class Executor(object):
         token_sock.close()
 
     def handle_forwardedJob(self, dict_of_jobs):
+        print(f'Before receive jobs: {self.waiting_jobs.keys()}')
         for k, v in dict_of_jobs.items():
             self.waiting_jobs[k] = v
 
+        print(f'After receive jobs: {self.waiting_jobs.keys()}')
         return 'ok' # ACK
 
-        # TODO Quando questi jobs sono completati, mandare il risultato al server da cui provenivano [specificato nel job_id]
+    def handle_sendResult(self, request):
+        """
+        Send the result to the Executor that forwarded the job
+        :param request:
+        :return:
+        """
+
+        job_id, result = request.getJobId_Result()
+        print(f'Received result of forwarded job: {job_id} : {result}')
+        self.completed_jobs[job_id] = result
+        del self.forwarded_jobs[job_id]
 
     def process_request(self, request, connection):
         request_type = request.get_type()
@@ -200,20 +219,26 @@ class Executor(object):
             # connection.close()
 
         if request_type == 'token':
-            # TODO probabilmente qui la connessione dobbiamo chiuderla perché non ci interessa mandare messaggi a quello che ci ha inviato il token
             connection.close()
             self.handle_token(request)
 
         if request_type == 'forwardJob':
             message = self.handle_forwardedJob(request.get_forwarding_job())
-            # connection.send(message.encode(ENCODING)) # ACK message
+            connection.send(message.encode(ENCODING)) # ACK message
+            connection.close()
+
+        if request_type == 'sendResult':
+            self.handle_sendResult(request)
             connection.close()
 
     def process_job(self):
         while True:
             if self.waiting_jobs:
+
                 # Get the first job_id and load the corresponding job
+
                 job_id, job = self.waiting_jobs.popitem(last=False)         # pop del primo elemento (il più "vecchio")
+
                 self.running_job[job_id] = job              # sposto il job
                 print(f'Executing job: {job_id}')          # print job_id
                 job.set_status("executing")             # set new status
@@ -223,8 +248,22 @@ class Executor(object):
 
                 # job execution complete
                 del self.running_job[job_id]          # delete job from dict
-                self.completed_jobs[job_id] = job.get_final_result()          # add result to dict
-                print(f'Job: {job_id} completed')
+                result = job.get_final_result()
+                self.completed_jobs[job_id] = result          # add result to dict
+
+                # If the job was forwarded, send result message to the sender of the job
+                sender = job_id.split('_')[0]
+                if sender != self.name:
+                    addr, port = sender.split(':')
+                    send_res = SendResult(job_id, result)
+                    res_message = pickle.dumps(send_res)
+
+                    sendRes_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    sendRes_sock.connect((addr, int(port)))
+
+                    sendRes_sock.sendall(res_message)
+
+                print(f'Job: {job_id} completed --> Result : {result}')
 
             else:
                 time.sleep(2)       # altrimenti da controlli a vuoto (per non sovraccaricare il pc)
@@ -232,9 +271,6 @@ class Executor(object):
 
 
     def run(self):
-
-        # TODO se l'id del server è == 0, crea l'oggetto Token, aspetta un po e fallo partire
-
         worker = threading.Thread(target=self.process_job)
         worker.start()
 
@@ -244,7 +280,7 @@ class Executor(object):
 
         if self.id == 0:
             token = Token(2)
-            time.sleep(60)      # TODO spostare questo
+            time.sleep(30)      # TODO spostare questo
             self.handle_token(token)
 
         while True:
@@ -268,13 +304,28 @@ class Executor(object):
 
 
 if __name__ == '__main__':
-    my_host = input("which is my host? ")
-    #my_host = '127.0.0.1'
-    my_port = int(input("which is my port? "))
-    #my_port = 8881
-    my_id = int(input("Which is my id?"))
-    #my_id = 0
-    next_executor_ip = input("Next Executor IP?")
-    next_executor_port = int(input("Next Executor port?"))
-    executor = Executor(my_host=my_host, my_port=my_port, id=my_id, next_ex_host=next_executor_ip, next_ex_port=next_executor_port)
+    # #my_host = input("which is my host? ")
+    # my_host = '127.0.0.1'
+    # my_port = int(input("which is my port? "))
+    # #my_port = 8881
+    # my_id = int(input("Which is my id?"))
+    # #my_id = 0
+    # next_executor_ip = input("Next Executor IP?")
+    # next_executor_port = int(input("Next Executor port?"))
+    # executor = Executor(my_host=my_host, my_port=my_port, id=my_id, next_ex_host=next_executor_ip, next_ex_port=next_executor_port)
+    # executor.run()
+
+    # Create the network
+
+    my_host = '127.0.0.1'
+    my_id =  int(input("Which is my id?"))
+
+    if my_id == 0:
+        executor = Executor(my_host=my_host, my_port=8881, id=my_id, next_ex_host=my_host,
+                            next_ex_port=8882)
+
+    if my_id == 1:
+        executor = Executor(my_host=my_host, my_port=8882, id=my_id, next_ex_host=my_host,
+                            next_ex_port=8881)
+
     executor.run()
