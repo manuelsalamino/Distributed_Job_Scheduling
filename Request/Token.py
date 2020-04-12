@@ -64,10 +64,10 @@ class Token(Request):
                     num_jobs_to_forward[h] = res
                     res = 0
 
-                else:
+                elif r < 0 and res + r > 0:
                     # curr_df.loc[idx, 'inc'] = res + r
-                    curr_df.loc[idx, 'n_jobs'] = res + r
-                    num_jobs_to_forward[h] = res + r
+                    curr_df.loc[idx, 'n_jobs'] -= r
+                    num_jobs_to_forward[h] = -r
                     res += r
 
                 if res == 0:
