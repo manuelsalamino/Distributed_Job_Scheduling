@@ -5,7 +5,7 @@ class Job:
     def __init__(self, name=""):
         self.name = name
         self.job_id = None
-        self.execution_time = random.randrange(1, 30)
+        self.execution_time = random.randrange(10, 30)
         self.status = 'ready'
         self.final_result = None
         self.sent_to = ''

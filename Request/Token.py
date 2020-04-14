@@ -30,6 +30,9 @@ class Token(Request):
             self.df.loc[host_id, 'host'] = host_ip_port
 
         self.df.loc[host_id, 'n_jobs'] = current_jobs
+        self.df['inc'] = [0] * self.df.shape[0]
+        print(self.df)
+        print("------------------------------------------------")
 
     def check_possible_forwarding(self, host_id):
         """
@@ -52,6 +55,7 @@ class Token(Request):
 
             res = curr_df.loc[host_id, 'residual']
             if  res <= 0:
+                print(self.df)
                 return {}
 
             curr_df = curr_df.drop(host_id) # Drop the row corresponding to itself
@@ -59,22 +63,26 @@ class Token(Request):
 
             for idx, h, r in zip(curr_df.index, curr_df.host, curr_df.residual):
                 if res + r <= 0:                # è res + r e non res - r perché r è già negativo
-                    # curr_df.loc[idx, 'inc'] = res
-                    curr_df.loc[idx,'n_jobs'] += res
+                    self.df.loc[idx, 'inc'] = res
+                    self.df.loc[idx,'n_jobs'] += res
                     num_jobs_to_forward[h] = res
+                    self.df.loc[host_id, 'n_jobs'] -= res
                     res = 0
 
+
                 elif r < 0 and res + r > 0:
-                    # curr_df.loc[idx, 'inc'] = res + r
-                    curr_df.loc[idx, 'n_jobs'] -= r
+                    self.df.loc[idx, 'inc'] =  -r
+                    self.df.loc[idx, 'n_jobs'] -= r
                     num_jobs_to_forward[h] = -r
+                    self.df.loc[host_id, 'n_jobs'] += r
                     res += r
 
                 if res == 0:
                     break
 
             # TODO utilizzare anche inc e strutturare meglio il tutto
-            return num_jobs_to_forward
+        print(self.df)
+        return num_jobs_to_forward
 
 
 
