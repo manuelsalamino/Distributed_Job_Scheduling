@@ -2,7 +2,10 @@ import socket
 import threading
 import pickle
 import time
+import random
 import collections
+import sys
+import os
 from Request.ForwardJob import ForwardJob
 from Request.Token import Token
 from Request.SendResult import SendResult
@@ -80,6 +83,9 @@ class Executor(object):
 
         # Locks
         self.waiting_jobs_lock = threading.Lock()    # OrderedDict non è thread-safe # TODO regolare accesso a self.waiting_jobs
+
+        # Save Executor State
+        self.filename = 'executor' + str(self.id) + '.pkl'       # nome del file in cui viene salvato lo stato dell'oggetto
 
     def getName(self):
         return self.name
@@ -282,10 +288,37 @@ class Executor(object):
                 time.sleep(2)       # altrimenti fa controlli a vuoto (per non sovraccaricare il pc)
                 # TODO capire come fare la terminazione
 
+    def save_state(self):
+        state = self.__dict__.copy()
+        del state['waiting_jobs_lock']    # thread.lock element non può essere fatto il pickle, quindi lo eliminiamo
+
+        with open(self.filename, 'wb') as f:
+            pickle.dump(state, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+    def restore_state(self):
+        with open(self.filename, 'rb') as f:  # TODO aggiungere self.waiting_jobs_lock quando si fa pickle.load
+            state = pickle.load(f)
+        self.__dict__.update(state)          # restore dell'oggetto con tutti i dati che erano stati salvati
+        self.waiting_jobs_lock = threading.Lock()           # aggiungo l'attributo lock di cui non potevo dare pickle
+        print("Restore done!\n")
+
+    def check_failure(self):
+        if fail.is_set():
+            print("Executor", self.name, "FAIL")
+            sys.exit()           # simulo il fallimento
 
     def run(self):
-        worker = threading.Thread(target=self.process_job)
+        if os.path.isfile(self.filename):           # if a backup is available, use it
+            self.restore_state()
+        else:                                    # otherwise create it
+            self.save_state()       # save the state
+
+        # thread for jobs execution
+        worker = threading.Thread(target=self.process_job, daemon=True)      # settato come Deamon così quando il main_thread viene stoppato and worker si stoppa
         worker.start()
+
+        #time.sleep(1.1)     # TODO wait in modo da avere un fail adesso (per fare test)
+        self.check_failure()        # check failure before create a socket for communication
 
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.bind((self.host, self.port))
@@ -298,7 +331,10 @@ class Executor(object):
 
         while True:
             connection, client_address = sock.accept()
-            #print(f'Connected with Client {client_address[0]} : {client_address[1]}')
+            print(f'Connected with Client {client_address[0]} : {client_address[1]}')
+
+            time.sleep(1.1)     # TODO wait in modo da avere un fail adesso (per fare test)
+            self.check_failure()             # check failure before receive request
 
             #print('Receiving data from client...')
             data = connection.recv(4096)  # Receiving message from client
@@ -314,6 +350,10 @@ class Executor(object):
 
 
             # break
+
+
+def executor_fail(f):
+    f.set()             # set to True flag di Event, significa che c'è stato un fail
 
 
 if __name__ == '__main__':
@@ -345,4 +385,19 @@ if __name__ == '__main__':
         executor = Executor(my_host=my_host, my_port=8883, id=my_id, next_ex_host=my_host,
                             next_ex_port=8881)
 
-    executor.run()
+    if os.path.isfile('executor' + str(my_id) + '.pkl'):            # remove backup of old execution
+        os.remove('executor' + str(my_id) + '.pkl')
+
+    fail = threading.Event()  # event shared with the master thread (notify when a fail occurs)
+
+    while True:
+        threading.Timer(random.randint(0, 1), function=executor_fail, args=(fail,)).start()     # dopo un intervallo di tempo random esegue la funzione che dice che c'è stato un fail nell'executor
+
+        exec = threading.Thread(target=executor.run)                # parte l'executor (o per la prima volta o dopo un fail)
+        exec.start()
+
+        exec.join()            # aspetto che avvenga un fallimento
+
+        fail.clear()        # Event flag set to False
+
+
