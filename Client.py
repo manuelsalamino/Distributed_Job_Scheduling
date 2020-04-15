@@ -51,22 +51,37 @@ class Client(threading.Thread):
 
         n = self.job_count
         while len(self.jobs_completed) < n:
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.connect((self.host, self.port))  # Connection to the server
 
-            request = self.generate_request()     # randomly create a request
+            request = self.generate_request()  # randomly create a request
 
-            message = pickle.dumps(request)
-            s.sendall(message)
+            received_data = ''
+            while len(received_data) == 0:      # se len(received_data) > 0 allora la connessione è andata a buon fine
+                try:
+                    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    s.connect((self.host, self.port))  # Connection to the server
 
-            received_data = s.recv(4096)  # Wait for the job_id or result # TODO Fault Tolerance: l'Executor potrebbe guastarsi prima di mandare il job_id/result
-            received_data = received_data.decode(ENCODING)
-            s.close()
+                    print(f'Connected with Executor {self.host}:{self.port}')
+
+                    message = pickle.dumps(request)
+                    s.sendall(message)
+                    s.settimeout(5)     # if the socket does not recv data in that time, assume the Executor has crashed
+
+                    received_data = s.recv(4096)  # Wait for the job_id or result # TODO Fault Tolerance: l'Executor potrebbe guastarsi prima di mandare il job_id/result
+                    received_data = received_data.decode(ENCODING)
+
+                    if len(received_data) == 0:       # a volte riceve dati vuoti ('')
+                        raise ConnectionError
+
+                    s.close()
+                except (ConnectionError, socket.timeout):
+                    # s.close()            # probabilmente non è necessario perchè la connessione è già chiusa
+                    print(f'Connection problem with the Executor {self.host}:{self.port}\n\nReconnection...\n')
+                    time.sleep(2)           # riprova la connessione tra qualche secondo
 
             if request.get_type() == 'jobRequest':
                 self.jobs_submitted.append(received_data)
 
-            if request.get_type() == 'resultRequest' and received_data is not None:
+            if request.get_type() == 'resultRequest':
                 if received_data == "waiting":
                     print("response:        the job is waiting")
                 elif received_data == "executing":
@@ -86,10 +101,12 @@ class Client(threading.Thread):
 
 
 if __name__ == '__main__':
-    server_host = input("what is server's host? ")
-    #server_host = '127.0.0.1'
-    server_port = int(input("what is server's port?"))
-    #server_port = 41
-    n_jobs = int(input("How many jobs?"))
+    #server_host = input("what is server's host? ")
+    server_host = '127.0.0.1'
+    #server_port = int(input("what is server's port?"))
+    server_port = 8882
+    #n_jobs = int(input("How many jobs?"))
+    n_jobs = 4
+
     sender = Client(server_host, server_port, n_jobs)
     sender.start()

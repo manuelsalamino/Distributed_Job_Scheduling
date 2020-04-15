@@ -219,6 +219,12 @@ class Executor(object):
     def process_request(self, request, connection):
         request_type = request.get_type()
         print(f'\trequest type : {request_type}')
+        try:
+            self.check_failure()
+        except SystemExit:
+            global threadError
+            threadError = True
+            sys.exit()
 
         if request_type == "jobRequest":
             message = self.handle_jobRequest(request)
@@ -317,8 +323,8 @@ class Executor(object):
         worker = threading.Thread(target=self.process_job, daemon=True)      # settato come Deamon così quando il main_thread viene stoppato and worker si stoppa
         worker.start()
 
-        #time.sleep(1.1)     # TODO wait in modo da avere un fail adesso (per fare test)
-        self.check_failure()        # check failure before create a socket for communication
+        time.sleep(1.1)     # TODO wait in modo da avere un fail (per fare test)
+        #self.check_failure()        # check failure before create a socket for communication
 
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.bind((self.host, self.port))
@@ -333,20 +339,27 @@ class Executor(object):
             connection, client_address = sock.accept()
             print(f'Connected with Client {client_address[0]} : {client_address[1]}')
 
-            time.sleep(1.1)     # TODO wait in modo da avere un fail adesso (per fare test)
-            self.check_failure()             # check failure before receive request
+            #self.check_failure()             # check failure before receive request
 
             #print('Receiving data from client...')
-            data = connection.recv(4096)  # Receiving message from client
+            data = connection.recv(4096)      # Receiving message
             #print('Message arrived')
             request = pickle.loads(data)
             #print(request)
 
             thread = threading.Thread(target=self.process_request, args=(request, connection))
             thread.start()
+
             thread.join()
 
-            print(f'\n\trunning: {self.running_job.keys()}\n\twaiting: {self.waiting_jobs.keys()}\n')
+            if threadError:      # if thread fail, the executor must fail (thread fail because of a simulate fault)
+                sock.close()           # close socket otherwise error when bind again (when executor re-join)
+                sys.exit()           # if thread exit means the failure occurs, the executor thread must exit too
+
+            #thread.join()
+
+            print(f'\n\t{len(self.running_job)} running job(s): {self.running_job.keys()}')
+            print(f'\t{len(self.waiting_jobs)} waiting job(s): {self.waiting_jobs.keys()}\n')
 
 
             # break
@@ -371,7 +384,8 @@ if __name__ == '__main__':
     # Create the network
 
     my_host = '127.0.0.1'
-    my_id = int(input("Which is my id?"))
+    #my_id = int(input("Which is my id?"))
+    my_id = 1
 
     if my_id == 0:
         executor = Executor(my_host=my_host, my_port=8881, id=my_id, next_ex_host=my_host,
@@ -391,6 +405,8 @@ if __name__ == '__main__':
     fail = threading.Event()  # event shared with the master thread (notify when a fail occurs)
 
     while True:
+        threadError = False     # trova fallimenti nei thread (sys.exit nei thread termina solo il thread e non il main_thread)
+
         threading.Timer(random.randint(0, 1), function=executor_fail, args=(fail,)).start()     # dopo un intervallo di tempo random esegue la funzione che dice che c'è stato un fail nell'executor
 
         exec = threading.Thread(target=executor.run)                # parte l'executor (o per la prima volta o dopo un fail)
