@@ -18,27 +18,6 @@ class Executor(object):
 
     """Commenti su possibili strategie e task da implementare
 
-        x Gestione di un job inoltrato:
-            # TODO quando l'Executor A ha inoltrato un suo job ad un altro Executor B e ad A arriva una ResultRequest dal
-            #  Client che ha submittato tale job, invece di "inoltrare questa richiesta a B per sapere se il job è stato
-            #  completato, aspettare che B risponda e ritornare tale risposta al Client", potremmo invece fare qualcosa di più
-            #  intelligente: "A inoltra il job a B e nello stesso momento si salva lo stato di B come 'in esecuzione'; quando il
-            #  client invia la ResultRequest ad A, A risponde direttamente con 'in esecuzione' senza inoltrare nessun messaggio
-            #  a B; sarà invece B che quando avrà completato il job manda un messaggio ad A: quando A riceve quel messaggio,
-            #  modifica lo stato del job inoltrato in modo che ad una prossima ResultRequest del Client, A possa rendere
-            #  direttamente il risultato minimizzando il numero di messaggi [è il pattern Publish-Subscribe]"
-
-        - Trovare un modo per salvare le informazioni in un file in modo da gestire la Fault Tolerance
-
-        - Ci sarebbe la possibilità di mettere, per esempio, il thread che aspetta il Token (oppure quello che esegue i jobs)
-            come un daemon invece che come un classico thread
-
-        - Un problema può essere che il token viaggi più velocemente dell'invio dei messaggi di forwardJob, forse dovremmo
-            aspettare un po' prima di far partire il token al prossimo executor.
-
-        - Fault Tolerance: probabilmente dobbiamo mettere un try: except: ogni volta che mandiamo un messaggio
-
-        - La comunicazione è affidabile, ma cosa vuol dire? Dobbiamo assumere che qualsiasi messaggio inviato arrivi a destinazione?
     """
 
     """
@@ -53,23 +32,12 @@ class Executor(object):
     """
 
     def __init__(self, my_host, my_port, id=0, next_ex_host='localhost', next_ex_port=8000):
-        """
 
-        :param my_host: server ip
-        :param my_port: server port
-        :param id:  server id
-        :param next_ex_host: Executor ip a cui è in comunicazione. La struttura è un Ring, ogni server sarà connesso solo con il successivo server
-        :param next_ex_port:  Executor port a cui è in comunicazione
-        """
         # Server
         self.host = my_host
         self.port = my_port
         self.id = id
         self.name = self.host + ':' + str(self.port)
-
-        """
-        - Controllo accesso risorse: dict e liste sono thread-safe in Python, mentre OrderedDict non lo è
-        """
 
         self.waiting_jobs = collections.OrderedDict()      # {job_id : job}   I jobs verranno poppati una volta che inizia la loro esecuzione
         self.running_job = {}        # {job_id: job}    elemento singolo (può essere eseguito solo un job alla volta)
@@ -80,9 +48,11 @@ class Executor(object):
         # Token
         self.next_executor_host = next_ex_host
         self.next_executor_port = next_ex_port
+        self.token = None
+        self.isTokenCreated = False
 
         # Locks
-        self.waiting_jobs_lock = threading.Lock()    # OrderedDict non è thread-safe # TODO regolare accesso a self.waiting_jobs
+        self.waiting_jobs_lock = threading.Lock()    # OrderedDict non è thread-safe
 
         # Save Executor State
         self.filename = 'executor' + str(self.id) + '.pkl'       # nome del file in cui viene salvato lo stato dell'oggetto
@@ -112,9 +82,6 @@ class Executor(object):
         print('\tresult Request arrived')
 
         job_id = request.get_jobId()
-        # message = 'waiting'  # Ogni tanto mi dà questo problema: "UnboundLocalError: local variable 'message' referenced before assigment"
-                             # Sembra che in certi momenti non entri in nessuno di quegli if, dunque non crea nessun 'message'.
-                             # Probabilmente è per una questione di accesso multiplo di più thread ad una stessa variabile
 
         if job_id in self.waiting_jobs.keys():
             message = "waiting"
@@ -129,8 +96,6 @@ class Executor(object):
 
 
     def handle_token(self, request):
-        # TODO prima di inviare il messaggio forwardJob, fare un check per vedere se effettivamente c'é il numero di messaggi richiesti in self.waiting_jobs
-        # TODO per gestire l'accesso in questo caso, forse è meglio mettere tutto handle_token in lock in process_request() ?
 
         print('\nToken received')
 
@@ -143,7 +108,7 @@ class Executor(object):
 
             # Check if the server can forward some jobs
             forwarding_candidates = request.check_possible_forwarding(self.id)
-
+            ack = ''
             # Forward jobs
             if len(forwarding_candidates) > 0:
                 for k, v in forwarding_candidates.items():
@@ -152,12 +117,11 @@ class Executor(object):
                     address, port = k[0], k[1]
 
                     # Create ForwardJob message to pack the jobs and send the message
-                    # TODO Thread-safe : gestire accesso a self.waiting_jobs
                     job_to_forward = {}
                     for i in range(v):
                         job_id, job = self.waiting_jobs.popitem(last=True)   # Prendiamo gli ultimi job aggiunti alla queue
-                        self.forwarded_jobs[job_id] = 'waiting'         # Questo dizionario verrà aggiornato quando l'Executor, a cui sono stati inoltrati i jobs,
-                                                                        # avrà finito uno dei job e manderà il risultato che verrà scritto direttamente qui [spiegato meglio sopra]
+                        self.forwarded_jobs[job_id] = 'waiting'
+
                         job_to_forward[job_id] = job
 
                     print(f'\tForwarding jobs: {job_to_forward.keys()}')
@@ -165,22 +129,33 @@ class Executor(object):
 
                     message = pickle.dumps(forwardJob, protocol=pickle.HIGHEST_PROTOCOL)
 
-                    forwarding_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    forwarding_sock.connect((address, int(port)))
+                    # Fault Tolerance: finché l'ack non viene ricevuto, si rimanda lo stesso messaggio all'Executor. Successivamente si salva lo stato
+                    while ack != 'ACK: jobs_forwarded':
+                        try:
+                            forwarding_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                            forwarding_sock.connect((address, int(port)))
+                        except Exception as e:
+                            print(f'Executor to which forward jobs is not available: exception {e} occurs')
+                            time.sleep(5)
+                            continue
 
-                    forwarding_sock.sendall(message)
+                        forwarding_sock.sendall(message)
 
-                    # TODO Fault Tolerance:
-                    #  aspettare per tot tempo un ACK: ci sarà una funzione di recv che ti permette di avere un timeout dopo il quale rinvii il messaggio.
-                    #  Alternativa: Salvarsi i messaggi forwardJob in un dizionario {'ip:port dell'Executor a cui inoltriamo' : forwardJob }.
-                    #  L'Executor che riceve questo messaggio forwardJob risponderà con un messaggio (ACK) con il proprio
-                    #  'ip:port' in modo da poter andare  direttamente a cancellare il dizionario quando il job è stato ricevuto.
+                        forwarding_sock.settimeout(5)
+                        try:
+                            ack = forwarding_sock.recv(4096) # wait for the ACK
+                            ack = ack.decode(ENCODING)
+                        except socket.timeout:
+                            print('Timeout occurred, no ack received')
+                            time.sleep(5)
+                            continue
 
-                    ack = forwarding_sock.recv(4096) # wait for the ACK
-                    if ack == 'ok':
-                        print('\tACK arrivato')
+                    self.save_state()
+                    print('\tACK arrivato')
 
                     forwarding_sock.close()
+
+                    ack = ''
             else:
                 print('\tNetwork is balanced ')
         finally:
@@ -188,12 +163,35 @@ class Executor(object):
             print('Handle_token releases lock')
 
         # forward the token to the next Executor
-        time.sleep(3) # Ritardo nell'invio, giusto per provare
+        token_ack = ''
+        time.sleep(random.randrange(2,5))
         token = pickle.dumps(request)
-        token_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        token_sock.connect((self.next_executor_host, self.next_executor_port))
-        token_sock.sendall(token)
+        while token_ack != 'ACK: token_received':
+            try:
+                token_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                print(token_sock)
+                token_sock.connect((self.next_executor_host, self.next_executor_port))
+            except Exception as e:
+                print(f"Token cannot be forwarded, Exeception: {e} occurs")
+                time.sleep(20)
+                continue
+
+            print('Sending token')
+            token_sock.sendall(token)
+            token_sock.settimeout(5)
+            try:
+                token_ack = token_sock.recv(4096)
+                token_ack = token_ack.decode(ENCODING)
+            except socket.timeout:
+                print('Timeout exception occurs, ACK: token_received not received')
+                time.sleep(5)
+                continue
+
         print(f'Token sent to {self.next_executor_host}:{self.next_executor_port}\n')
+
+        self.token = None
+        self.save_state()
+        print('Token = None')
         token_sock.close()
 
     def handle_forwardedJob(self, dict_of_jobs):
@@ -201,8 +199,9 @@ class Executor(object):
         for k, v in dict_of_jobs.items():
             self.waiting_jobs[k] = v
 
+        self.save_state()
         print(f'\tAfter receive jobs: {self.waiting_jobs.keys()}')
-        return 'ok' # ACK
+        return 'ACK: jobs_forwarded' # ACK
 
     def handle_sendResult(self, request):
         """
@@ -219,17 +218,21 @@ class Executor(object):
     def process_request(self, request, connection):
         request_type = request.get_type()
         print(f'\trequest type : {request_type}')
-        try:
-            self.check_failure()
-        except SystemExit:
-            global threadError
-            threadError = True
-            sys.exit()
+        # try:
+        #     self.check_failure()
+        # except SystemExit:
+        #     global threadError
+        #     threadError = True
+        #     sys.exit()
 
         if request_type == "jobRequest":
             message = self.handle_jobRequest(request)
             connection.send(message.encode(ENCODING))
             #connection.close()
+
+            # Fault Tolerance: si salva lo stato tutte le volte che un messaggio viene inviato
+            self.save_state()  # Nel caso di jobRequest, lo stato va necessariamente salvato dopo l'invio del messaggio
+                               # poiché siamo sicuri che il Client abbia ricevuto correttamente il job_id
 
         if request_type == "resultRequest":
             message = self.handle_resultRequest(request)
@@ -237,20 +240,25 @@ class Executor(object):
             # connection.close()
 
         if request_type == 'token':
+            self.token = request
+            message = 'ACK: token_received'
+            connection.send(message.encode(ENCODING))
+            self.save_state()
             connection.close()
-            self.handle_token(request)
+            self.handle_token(self.token)
 
         if request_type == 'forwardJob':
             message = self.handle_forwardedJob(request.get_forwarding_job())
             connection.send(message.encode(ENCODING)) # ACK message
             connection.close()
 
-        if request_type == 'sendResult':
+        if request_type == 'sendResult':    # TODO Fault Tolerance: gestire handle_sendResult e anche l'invio in process_jobs
             self.handle_sendResult(request)
             connection.close()
 
     def process_job(self):
         while True:
+            # print(f'Process job: {threading.currentThread().getName()}')
             if self.waiting_jobs:
 
                 # Get the first job_id and load the corresponding job
@@ -302,38 +310,57 @@ class Executor(object):
             pickle.dump(state, f, protocol=pickle.HIGHEST_PROTOCOL)
 
     def restore_state(self):
-        with open(self.filename, 'rb') as f:  # TODO aggiungere self.waiting_jobs_lock quando si fa pickle.load
+        with open(self.filename, 'rb') as f:
             state = pickle.load(f)
         self.__dict__.update(state)          # restore dell'oggetto con tutti i dati che erano stati salvati
         self.waiting_jobs_lock = threading.Lock()           # aggiungo l'attributo lock di cui non potevo dare pickle
         print("Restore done!\n")
 
-    def check_failure(self):
-        if fail.is_set():
-            print("Executor", self.name, "FAIL")
-            sys.exit()           # simulo il fallimento
+    # def check_failure(self):
+    #     if fail.is_set():
+    #         print("Executor", self.name, "FAIL")
+    #         sys.exit()           # simulo il fallimento
 
     def run(self):
+        print('EXECUTOR ALIVEE  !!')
         if os.path.isfile(self.filename):           # if a backup is available, use it
+            print('File esistente')
             self.restore_state()
         else:                                    # otherwise create it
+            print('File non esistente')
             self.save_state()       # save the state
 
         # thread for jobs execution
-        worker = threading.Thread(target=self.process_job, daemon=True)      # settato come Deamon così quando il main_thread viene stoppato and worker si stoppa
+        worker = threading.Thread(target=self.process_job)      # settato come Deamon così quando il main_thread viene stoppato and worker si stoppa
         worker.start()
 
         time.sleep(1.1)     # TODO wait in modo da avere un fail (per fare test)
         #self.check_failure()        # check failure before create a socket for communication
 
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.bind((self.host, self.port))
+        isBind = False
+        while not isBind:   # Gestisce l'Exception: Address already in use
+            try:
+                sock.bind((self.host, self.port))
+                isBind = True
+            except Exception as e:
+                print(f'Exception {e} \n Wait and try again')
+                time.sleep(10)
+
+        print('Bind done')
         sock.listen(10)  # The argument specifies the number of unaccepted connections that the system will allow before refusing new connection
+        print('Server is listening')
+
+        if self.token:
+            self.handle_token(self.token)
 
         if self.id == 0:
-            token = Token(3)    # TODO aggiornare dinamicamente
-            time.sleep(30)      # TODO spostare questo
-            self.handle_token(token)
+            if not self.isTokenCreated:
+                self.token = Token()
+                print('Token Created')
+                self.isTokenCreated = True
+                time.sleep(7)      # TODO spostare questo
+                self.handle_token(self.token)
 
         while True:
             connection, client_address = sock.accept()
@@ -352,9 +379,9 @@ class Executor(object):
 
             thread.join()
 
-            if threadError:      # if thread fail, the executor must fail (thread fail because of a simulate fault)
-                sock.close()           # close socket otherwise error when bind again (when executor re-join)
-                sys.exit()           # if thread exit means the failure occurs, the executor thread must exit too
+            # if threadError:      # if thread fail, the executor must fail (thread fail because of a simulate fault)
+            #     sock.close()           # close socket otherwise error when bind again (when executor re-join)
+            #     sys.exit()           # if thread exit means the failure occurs, the executor thread must exit too
 
             #thread.join()
 
@@ -367,6 +394,8 @@ class Executor(object):
 
 def executor_fail(f):
     f.set()             # set to True flag di Event, significa che c'è stato un fail
+    print("Executor FAIL !!!!!!!!!!!!")
+    sys.exit()  # simulo il fallimento
 
 
 if __name__ == '__main__':
@@ -384,8 +413,8 @@ if __name__ == '__main__':
     # Create the network
 
     my_host = '127.0.0.1'
-    #my_id = int(input("Which is my id?"))
-    my_id = 1
+    my_id = int(input("Which is my id?"))
+    #my_id = 1
 
     if my_id == 0:
         executor = Executor(my_host=my_host, my_port=8881, id=my_id, next_ex_host=my_host,
@@ -402,12 +431,13 @@ if __name__ == '__main__':
     if os.path.isfile('executor' + str(my_id) + '.pkl'):            # remove backup of old execution
         os.remove('executor' + str(my_id) + '.pkl')
 
+
     fail = threading.Event()  # event shared with the master thread (notify when a fail occurs)
 
     while True:
         threadError = False     # trova fallimenti nei thread (sys.exit nei thread termina solo il thread e non il main_thread)
 
-        threading.Timer(random.randint(0, 1), function=executor_fail, args=(fail,)).start()     # dopo un intervallo di tempo random esegue la funzione che dice che c'è stato un fail nell'executor
+        threading.Timer(random.randint(20, 30), function=executor_fail, args=(fail,)).start()     # dopo un intervallo di tempo random esegue la funzione che dice che c'è stato un fail nell'executor
 
         exec = threading.Thread(target=executor.run)                # parte l'executor (o per la prima volta o dopo un fail)
         exec.start()
@@ -415,5 +445,3 @@ if __name__ == '__main__':
         exec.join()            # aspetto che avvenga un fallimento
 
         fail.clear()        # Event flag set to False
-
-
