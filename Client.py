@@ -78,9 +78,6 @@ class Client(threading.Thread):
                     if len(received_data) == 0:       # a volte riceve dati vuoti ('')
                         raise ConnectionError
 
-                    if request.get_postponed() and request.get_type() == "jobRequest":
-                        c=0
-
                     s.close()
                 except (ConnectionError, socket.timeout):
                     # s.close()            # probabilmente non è necessario perchè la connessione è già chiusa
