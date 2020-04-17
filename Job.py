@@ -5,7 +5,8 @@ class Job:
     def __init__(self, name=""):
         self.name = name
         self.job_id = None
-        self.execution_time = random.randrange(10, 30)
+        self.request_id = None
+        self.execution_time = random.randrange(5, 10)
         self.status = 'ready'
         self.final_result = None
         self.sent_to = ''
@@ -17,6 +18,12 @@ class Job:
     def get_id(self):
         return self.job_id
 
+    def set_request_id(self, id):
+        self.request_id = id
+
+    def get_request_id(self):
+        return self.request_id
+
     def get_execution_time(self):
         return self.execution_time
 
@@ -26,10 +33,10 @@ class Job:
     def get_status(self):
         return self.status
 
+    def set_final_result(self, result):
+        self.final_result = result
+
     def get_final_result(self):
-        if self.final_result is None:   # if the result was not computed yet, compute it (simulation)
-            self.final_result = random.randint(0, 100)
-        self.status = 'completed'
         return self.final_result
 
     def set_sent_to(self, executor):
