@@ -6,19 +6,18 @@ import numpy as np
 
 class Token(Request):
 
-    def __init__(self):
+    def __init__(self, n_executors):
         """
         Each Executor updates the row with index == executor_id.
         Moreover, when the token arrives the first time to a server, it writes its 'host'+'port' on the corresponding 'host' cell in df
         :param n_executors: number of executor in the cluster
-
         # TODO per togliere il parametro n_executors si può fare un check per vedere se il server che attualmente ha il
         # token compare tra gli host, altrimenti aggiunge le sue credenziali
         """
         super().__init__(message_type='token')
-        self.df = pd.DataFrame(columns=['host', 'n_jobs', 'inc'])
-        #self.df[[ 'n_jobs', 'inc']] = self.df[[ 'n_jobs', 'inc']].fillna(0)
-        #self.df['host'] = self.df['host'].fillna('')
+        self.df = pd.DataFrame(index=list(range(n_executors)), columns=['host', 'n_jobs', 'inc'])
+        self.df[[ 'n_jobs', 'inc']] = self.df[[ 'n_jobs', 'inc']].fillna(0)
+        self.df['host'] = self.df['host'].fillna('')
 
         # TODO la colonna 'inc' potrebbe essere usata nella fault tolerance, in modo che con il token si annunciano
         #  quanti jobs verranno passati ad un executor, però l'Executor che li riceve deve mandare un ACK per annunciare
@@ -26,11 +25,8 @@ class Token(Request):
         #  tenere conto anche della colonna 'inc' oltre a 'n_jobs'
 
     def update(self, host_ip_port ,host_id, current_jobs):
-        if host_id not in self.df.index:
-            new_row = pd.Series({'host': host_ip_port, 'n_jobs':current_jobs, 'inc': 0})
-            new_row.name = host_id
-            self.df = self.df.append(new_row)
-
+        if self.df.loc[host_id, 'host'] == '':
+            self.df.loc[host_id, 'host'] = host_ip_port
 
         self.df.loc[host_id, 'n_jobs'] = current_jobs
         self.df['inc'] = [0] * self.df.shape[0]
@@ -83,14 +79,6 @@ class Token(Request):
                 if res == 0:
                     break
 
-            # TODO utilizzare anche inc e strutturare meglio il tutto
+            # TODO utilizzare anche inc e strutturare meglio il tutto
         print(self.df)
         return num_jobs_to_forward
-
-
-
-
-
-
-
-
