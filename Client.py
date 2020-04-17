@@ -106,7 +106,6 @@ class Client(threading.Thread):
 
 
 
-
 if __name__ == '__main__':
     #server_host = input("what is server's host? ")
     server_host = '127.0.0.1'
