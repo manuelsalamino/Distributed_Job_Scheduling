@@ -22,28 +22,34 @@ class Client(threading.Thread):
         self.jobs_completed = {}   # pop from jobs_submitted and add to this list. Element: {'job_id': result}
         self.job_count = n_jobs
 
+    def generate_job_request(self):
+        job = Job()  # create the job
+        request = JobRequest(job=job)
+        job.set_request_id(request.get_id())  # set the request_id in the job (needed to identify postponed request)
+        print("request:     start new job")
+        self.job_count -= 1
+
+        return request
+
+    def generate_result_request(self):
+        tmp = self.jobs_submitted[random.randrange(len(self.jobs_submitted))]  # choose randomly a request already submitted
+        request = ResultRequest(tmp)
+        print("action:     result for job", tmp)
+
+        return request
+
     def generate_request(self):
         if not self.jobs_submitted and self.job_count > 0:  # if it is the first action, it is a JobRequest
-            job = Job()  # create the job
-            request = JobRequest(job=job)
-            print("request:     start new job")
-            self.job_count -= 1
+            request = self.generate_job_request()
 
         elif self.job_count > 0:
             type_of_message = random.randint(0, 1)  # 0: send a new request; 1: check an already submitted request
             if type_of_message == 0:
-                job = Job()     # create the job
-                request = JobRequest(job=job)
-                print("action:     start new job")
-                self.job_count -= 1
+                request = self.generate_job_request()
             else:
-                tmp = self.jobs_submitted[random.randrange(len(self.jobs_submitted))] # choose randomly a request already submitted
-                request = ResultRequest(tmp)
-                print("action:     result for job", tmp)
+                request = self.generate_result_request()
         else:
-            tmp = self.jobs_submitted[random.randrange(len(self.jobs_submitted))]  # choose randomly a request already submitted
-            request = ResultRequest(tmp)
-            print("action:     result for job", tmp)
+            request = self.generate_result_request()
 
         return request
 
@@ -72,10 +78,14 @@ class Client(threading.Thread):
                     if len(received_data) == 0:       # a volte riceve dati vuoti ('')
                         raise ConnectionError
 
+                    if request.get_postponed() and request.get_type() == "jobRequest":
+                        c=0
+
                     s.close()
                 except (ConnectionError, socket.timeout):
                     # s.close()            # probabilmente non è necessario perchè la connessione è già chiusa
                     print(f'Connection problem with the Executor {self.host}:{self.port}\n\nReconnection...\n')
+                    request.set_postponed()
                     time.sleep(2)           # riprova la connessione tra qualche secondo
 
             if request.get_type() == 'jobRequest':
@@ -106,7 +116,7 @@ if __name__ == '__main__':
     #server_port = int(input("what is server's port?"))
     server_port = 8882
     #n_jobs = int(input("How many jobs?"))
-    n_jobs = 10
+    n_jobs = 5
 
     sender = Client(server_host, server_port, n_jobs)
     sender.start()
