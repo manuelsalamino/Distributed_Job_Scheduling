@@ -445,3 +445,6 @@ if __name__ == '__main__':
         exec.join()            # aspetto che avvenga un fallimento
 
         fail.clear()        # Event flag set to False
+
+
+# pusha?
