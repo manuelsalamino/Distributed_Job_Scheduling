@@ -171,7 +171,6 @@ class Executor(object):
         while token_ack != 'ACK: token_received':
             try:
                 token_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                print(token_sock)
                 token_sock.connect((self.next_executor_host, self.next_executor_port))
             except Exception as e:
                 print(f"Token cannot be forwarded, Exeception: {e} occurs")
@@ -201,23 +200,21 @@ class Executor(object):
         for k, v in dict_of_jobs.items():
             self.waiting_jobs[k] = v
 
-        self.save_state()
+        self.save_state()           # TODO probabilmente questo va dopo l'invio dell'ACK
         print(f'\tAfter receive jobs: {self.waiting_jobs.keys()}')
         return 'ACK: jobs_forwarded'  # ACK
 
     def handle_sendResult(self, request):
         """
         Send the result to the Executor that forwarded the job
-        :param request:
-        :return:
         """
 
         job_id, job = request.getJobId_Job()
         print(f'\tReceived result of forwarded job: {job_id} : {job.get_final_result()}')
         self.completed_jobs[job_id] = job
         del self.forwarded_jobs[job_id]
-
-        self.save_state()
+        self.save_state()           # TODO probabilmente questo va dopo l'invio dell'ACK
+        return 'ACK: result received'
 
     def process_request(self, request, connection):
         request_type = request.get_type()
@@ -241,8 +238,12 @@ class Executor(object):
 
             if request_type == 'token':
                 print('\trequest: token')
+                self.token = request
+                message = 'ACK: token_received'
+                connection.send(message.encode(ENCODING))
+                self.save_state()
                 connection.close()
-                self.handle_token(request)
+                self.handle_token(self.token)
 
             if request_type == 'forwardJob':
                 print('\trequest: reiceved forwarded job')
@@ -252,7 +253,8 @@ class Executor(object):
 
             if request_type == 'sendResult':
                 print('\trequest: reiceved result from forwarded job')
-                self.handle_sendResult(request)
+                message = self.handle_sendResult(request)
+                connection.send(message.encode(ENCODING)) # ACK message
                 connection.close()
         except (SystemExit, ConnectionError):
             global threadError
@@ -321,18 +323,30 @@ class Executor(object):
                 # If the job was forwarded, send result message to the sender of the job
                 sender = job_id.split('_')[0]
                 if sender != self.name:
+                    sendRes_ack = ''
                     addr, port = sender.split(':')
                     send_res = SendResult(job_id, job)
                     res_message = pickle.dumps(send_res)
 
-                    sendRes_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    sendRes_sock.connect((addr, int(port)))
+                    while sendRes_ack != 'ACK: result received':
+                        try:
+                            sendRes_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                            sendRes_sock.connect((addr, int(port)))
+                        except Exception as e:
+                            print(f"Result of forwarded job cannot be returned: Exception {e} occurs")
+                            continue
 
-                    sendRes_sock.sendall(res_message)
-                    print(f'Forwarded job {job_id} completed --> Result : {job.get_final_result()}')
+                        sendRes_sock.sendall(res_message)
+                        print(f'Forwarded job {job_id} completed --> Result : {job.get_final_result()}')
 
-                    # TODO gestire fault tolerance
-
+                        sendRes_sock.settimeout(5)
+                        try:
+                            sendRes_ack = sendRes_sock.recv(4096)
+                            sendRes_ack = sendRes_ack.decode(ENCODING)
+                        except socket.timeout:
+                            print('Timeout exception occurs, ACK: token_received not received')
+                            time.sleep(5)
+                            continue
 
                 print(f'\tJob: {job_id} completed --> Result : {job.get_final_result()}')
 
@@ -399,7 +413,8 @@ class Executor(object):
                 self.token = Token()
                 print('Token created')
                 self.isTokenCreated = True
-                time.sleep(7)
+                time.sleep(10)
+                self.save_state()
                 self.handle_token(self.token)
 
         while True:
@@ -450,8 +465,8 @@ if __name__ == '__main__':
 
     # Create the network
     my_host = '127.0.0.1'
-    #my_id = int(input("Which is my id?"))
-    my_id = 1
+    my_id = int(input("Which is my id?"))
+    #my_id = 1
 
     if my_id == 0:
         executor = Executor(my_host=my_host, my_port=8881, id=my_id, next_ex_host=my_host,
@@ -473,7 +488,7 @@ if __name__ == '__main__':
     while True:
         threadError = False     # True se ci sono fallimenti nei thread (sys.exit nei thread termina solo il thread e non il main_thread)
 
-        threading.Timer(random.randint(5, 20), function=executor_fail, args=(fail,)).start()     # dopo un intervallo di tempo random esegue la funzione che dice che c'è stato un fail nell'executor
+        threading.Timer(random.randint(20, 60), function=executor_fail, args=(fail,)).start()     # dopo un intervallo di tempo random esegue la funzione che dice che c'è stato un fail nell'executor
 
         exec = threading.Thread(target=executor.run, name='Executor')          # parte l'executor (o per la prima volta, o dopo un crash)
         exec.start()

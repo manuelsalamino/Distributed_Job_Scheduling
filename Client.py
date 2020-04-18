@@ -112,7 +112,7 @@ if __name__ == '__main__':
     #server_port = int(input("what is server's port?"))
     server_port = 8882
     #n_jobs = int(input("How many jobs?"))
-    n_jobs = 5
+    n_jobs = 10
 
     sender = Client(server_host, server_port, n_jobs)
     sender.start()
