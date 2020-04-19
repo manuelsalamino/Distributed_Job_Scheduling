@@ -24,6 +24,12 @@ class Executor(object):
             credo si possa supporre che mentre questo salvataggio è in atto, il server non possa fallire
     """
 
+    """
+        - Executor Fail e non riparte
+        - Address Already in use
+        - del self.running_jobs[job_id]
+    """
+
     def __init__(self, my_host, my_port, id=0, next_ex_host='localhost', next_ex_port=8000):
 
         # Server
@@ -37,6 +43,7 @@ class Executor(object):
         self.completed_jobs = {}  # {'job_id': job}   prima mettevo solo il final_result, ma mi serve accedere al request_id del job in self.handle_request
         self.job_counter = 0        # usato nella creazione del job_id
         self.forwarded_jobs = {}    # per tenere traccia dei jobs inoltrati ad altri executor. Ogni elemento è: {job_id : "server_host+server_port")}
+        self.return_res_job = None   # Si usa nel caso in cui l'Executor crasha quando sta per inviare il risultato di un job
 
         # Token
         self.next_executor_host = next_ex_host
@@ -269,6 +276,11 @@ class Executor(object):
         while True:
             #print(f"worker thread {threading.current_thread().ident} attivo!")
 
+            # If the job was forwarded, send result message to the sender of the job
+            if self.return_res_job:
+                self.return_res_forwarded_job(self.return_res_job)
+                self.return_res_job = None
+
             if self.check_failure():
                 print("Executor FAIL - process_job (inizio)")
                 threadError = True
@@ -313,46 +325,63 @@ class Executor(object):
                     sys.exit()  # simulo il fallimento
 
                 # job execution complete
-                del self.running_job[job_id]          # delete job from dict
+                try:
+                    del self.running_job[job_id]          # delete job from dict    # TODO Risolvere qui: in un caso smatta
+                except Exception as e:
+                    print(f"Exception - Process job: {e}   in del self.running_job[job_id]")
+                    print(f'running jobs: {self.running_job.keys()}')
+                    print(f'completed jobs: {self.completed_jobs.keys()}')
+                    print(f'waiting jobs: {self.waiting_jobs.keys()}')
+                    print(f'forwarded jobs: {self.forwarded_jobs.keys()}')
+
                 job.set_final_result(random.randint(0, 100))    # compute final result
                 job.set_status('completed')
                 self.completed_jobs[job_id] = job          # add result to dict
 
+
+                sender = job_id.split('_')[0]
+                if sender != self.name:
+                    self.return_res_job = (sender, job_id, job)
+
                 self.save_state()      # salvo lo stato appena l'esecuzione è finita
 
                 # If the job was forwarded, send result message to the sender of the job
-                sender = job_id.split('_')[0]
-                if sender != self.name:
-                    sendRes_ack = ''
-                    addr, port = sender.split(':')
-                    send_res = SendResult(job_id, job)
-                    res_message = pickle.dumps(send_res)
-
-                    while sendRes_ack != 'ACK: result received':
-                        try:
-                            sendRes_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                            sendRes_sock.connect((addr, int(port)))
-                        except Exception as e:
-                            print(f"Result of forwarded job cannot be returned: Exception {e} occurs")
-                            continue
-
-                        sendRes_sock.sendall(res_message)
-                        print(f'Forwarded job {job_id} completed --> Result : {job.get_final_result()}')
-
-                        sendRes_sock.settimeout(5)
-                        try:
-                            sendRes_ack = sendRes_sock.recv(4096)
-                            sendRes_ack = sendRes_ack.decode(ENCODING)
-                        except socket.timeout:
-                            print('Timeout exception occurs, ACK: token_received not received')
-                            time.sleep(5)
-                            continue
+                if self.return_res_job:
+                    self.return_res_forwarded_job(self.return_res_job)
+                    self.return_res_job = None
 
                 print(f'\tJob: {job_id} completed --> Result : {job.get_final_result()}')
 
             else:
                 time.sleep(2)       # altrimenti fa controlli a vuoto (per non sovraccaricare il pc)
                 # TODO capire come fare la terminazione
+
+    def return_res_forwarded_job(self, return_res_tuple):
+        sendRes_ack = ''
+        sender, job_id, job = return_res_tuple
+        addr, port = sender.split(':')
+        send_res = SendResult(job_id, job)
+        res_message = pickle.dumps(send_res)
+
+        while sendRes_ack != 'ACK: result received':
+            try:
+                sendRes_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sendRes_sock.connect((addr, int(port)))
+            except Exception as e:
+                print(f"Result of forwarded job cannot be returned: Exception {e} occurs")
+                continue
+
+            sendRes_sock.sendall(res_message)
+            print(f'Forwarded job {job_id} completed --> Result : {job.get_final_result()}')
+
+            sendRes_sock.settimeout(5)
+            try:
+                sendRes_ack = sendRes_sock.recv(4096)
+                sendRes_ack = sendRes_ack.decode(ENCODING)
+            except socket.timeout:
+                print('Timeout exception occurs, ACK: token_received not received')
+                time.sleep(5)
+                continue
 
     def save_state(self):
         state = self.__dict__.copy()
@@ -389,7 +418,7 @@ class Executor(object):
             sys.exit()  # simulo il fallimento
 
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         isBind = False
         while not isBind:   # Gestisce l'Exception: Address already in use
             try:
@@ -465,8 +494,11 @@ if __name__ == '__main__':
 
     # Create the network
     my_host = '127.0.0.1'
-    my_id = int(input("Which is my id?"))
+    #my_id = int(input("Which is my id?"))
     #my_id = 1
+
+    # Argomento per lo script bash
+    my_id = int(sys.argv[1])
 
     if my_id == 0:
         executor = Executor(my_host=my_host, my_port=8881, id=my_id, next_ex_host=my_host,
