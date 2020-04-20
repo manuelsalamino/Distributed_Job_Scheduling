@@ -1,12 +1,11 @@
 import random
 
-
 class Job:
     def __init__(self, name=""):
         self.name = name
         self.job_id = None
         self.request_id = None
-        self.execution_time = random.randrange(5, 10)
+        self.execution_time = random.randrange(10, 20)
         self.status = 'ready'
         self.final_result = None
         self.sent_to = ''

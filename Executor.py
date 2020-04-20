@@ -88,8 +88,14 @@ class Executor(object):
 
         return message
 
+    # FAULT TOLERANCE: se mettessimo save_state dopo che il messaggio è stato mandato, non bisogna preoccuparci del fatto che
+    # il server può crashare appena dopo l'invio del messaggio poiché il Client ha ricevuto il job_id: potremmo invece fare in modo
+    # di rinviare l'intero job nel caso in cui il Client fa una resultRequest e il server non trova quel job_id
+
     def handle_resultRequest(self, request):
         print('\tresult Request arrived')
+        # Fault Tolerance: non dobbiamo preoccuparci molto per questi. Se il Client non riceve risposta a causa del crash del server
+        # gli basta reinviare di nuovo la richiesta. Non c'é da salvare nessuno stato
 
         job_id = request.get_jobId()
 
@@ -106,6 +112,12 @@ class Executor(object):
 
     def handle_token(self, request):
         print('\nToken received')
+
+        """
+        Fault Tolerance: 
+        - Il token venga inviato correttamente
+        - I messaggi inoltrati vengono ricevuti correttamente
+        """
 
         #print('Handle_token waiting for lock')
         self.waiting_jobs_lock.acquire()
@@ -226,47 +238,48 @@ class Executor(object):
     def process_request(self, request, connection):
         request_type = request.get_type()
 
-        try:
-            if self.check_failure():         # se il thread che esegue process_request crasha, anche executor_thread crasha
-                print("Executor FAIL - process_request")
-                sys.exit()  # simulo il fallimento
+        # try:
+        #     if self.check_failure():         # se il thread che esegue process_request crasha, anche executor_thread crasha
+        #         print("Executor FAIL - process_request")
+        #         sys.exit()  # simulo il fallimento
 
-            if request_type == "jobRequest":
-                print('\trequest: new job')
-                message = self.handle_jobRequest(request)
-                connection.send(message.encode(ENCODING))
-                # connection.close()
+        if request_type == "jobRequest":
+            print('\trequest: new job')
+            message = self.handle_jobRequest(request)
+            connection.send(message.encode(ENCODING))
+            # connection.close()
 
-            if request_type == "resultRequest":
-                print(f'\trequest: result job {request.get_jobId()}')
-                message = self.handle_resultRequest(request)
-                connection.send(message.encode(ENCODING))
-                # connection.close()
+        if request_type == "resultRequest":
+            print(f'\trequest: result job {request.get_jobId()}')
+            message = self.handle_resultRequest(request)
+            connection.send(message.encode(ENCODING))
+            # connection.close()
 
-            if request_type == 'token':
-                print('\trequest: token')
-                self.token = request
-                message = 'ACK: token_received'
-                connection.send(message.encode(ENCODING))
-                self.save_state()
-                connection.close()
-                self.handle_token(self.token)
+        if request_type == 'token':
+            print('\trequest: token')
+            self.token = request
+            message = 'ACK: token_received'
+            connection.send(message.encode(ENCODING))
+            self.save_state()
+            connection.close()
+            self.handle_token(self.token)
 
-            if request_type == 'forwardJob':
-                print('\trequest: reiceved forwarded job')
-                message = self.handle_forwardedJob(request.get_forwarding_job())
-                connection.send(message.encode(ENCODING))  # ACK message
-                connection.close()
+        if request_type == 'forwardJob':
+            print('\trequest: reiceved forwarded job')
+            message = self.handle_forwardedJob(request.get_forwarding_job())
+            connection.send(message.encode(ENCODING))  # ACK message
+            connection.close()
 
-            if request_type == 'sendResult':
-                print('\trequest: reiceved result from forwarded job')
-                message = self.handle_sendResult(request)
-                connection.send(message.encode(ENCODING)) # ACK message
-                connection.close()
-        except (SystemExit, ConnectionError):
-            global threadError
-            threadError = True
-            sys.exit()
+        if request_type == 'sendResult':
+            print('\trequest: reiceved result from forwarded job')
+            message = self.handle_sendResult(request)
+            connection.send(message.encode(ENCODING)) # ACK message
+            connection.close()
+
+        # except (SystemExit, ConnectionError):
+        #     global threadError
+        #     threadError = True
+        #     sys.exit()
 
         print(f'\n\t{len(self.running_job)} running job(s): {self.running_job.keys()}')
         print(f'\t{len(self.waiting_jobs)} waiting job(s): {self.waiting_jobs.keys()}\n')
@@ -281,10 +294,10 @@ class Executor(object):
                 self.return_res_forwarded_job(self.return_res_job)
                 self.return_res_job = None
 
-            if self.check_failure():
-                print("Executor FAIL - process_job (inizio)")
-                threadError = True
-                sys.exit()  # simulo il fallimento
+            # if self.check_failure():
+            #     print("Executor FAIL - process_job (inizio)")
+            #     threadError = True
+            #     sys.exit()  # simulo il fallimento
 
             if self.waiting_jobs or self.running_job:
                 if len(self.running_job) == 0:
@@ -310,19 +323,19 @@ class Executor(object):
                 elif len(self.running_job) == 1:       # popitem already done, worker have to restart executing that one
                     job_id, job = list(self.running_job.items())[0]
 
-                if self.check_failure():
-                    print("Executor FAIL - process_request (prima di inizio esecuzione)")
-                    threadError = True
-                    sys.exit()  # simulo il fallimento
+                # if self.check_failure():
+                #     print("Executor FAIL - process_request (prima di inizio esecuzione)")
+                #     threadError = True
+                #     sys.exit()  # simulo il fallimento
 
                 # Execute the job
                 time.sleep(job.get_execution_time())
 
                 # NON POSSO FARE check_fail DURANTE ESECUZIONE, QUINDI CONTROLLO PRIMA DI SALVARE, APPENA FINISCE L'ESEC
-                if self.check_failure():
-                    print("Executor FAIL - process_job (dopo esecuzione)")
-                    threadError = True
-                    sys.exit()  # simulo il fallimento
+                # if self.check_failure():
+                #     print("Executor FAIL - process_job (dopo esecuzione)")
+                #     threadError = True
+                #     sys.exit()  # simulo il fallimento
 
                 # job execution complete
                 try:
@@ -337,7 +350,6 @@ class Executor(object):
                 job.set_final_result(random.randint(0, 100))    # compute final result
                 job.set_status('completed')
                 self.completed_jobs[job_id] = job          # add result to dict
-
 
                 sender = job_id.split('_')[0]
                 if sender != self.name:
@@ -397,10 +409,10 @@ class Executor(object):
         self.waiting_jobs_lock = threading.Lock()           # aggiungo l'attributo lock di cui non potevo dare pickle
         print("Restore done!\n")
 
-    def check_failure(self):
-        if fail.is_set():
-            return True
-        return False
+    # def check_failure(self):
+    #     if fail.is_set():
+    #         return True
+    #     return False
 
     def run(self):
         if os.path.isfile(self.filename):           # if a backup is available, use it
@@ -413,9 +425,9 @@ class Executor(object):
         worker.start()
 
         #time.sleep(1.1)     # wait in modo da avere un fail (per fare test)
-        if self.check_failure():
-            print("Executor FAIL - executor run (prima di creazione socket)")
-            sys.exit()  # simulo il fallimento
+        # if self.check_failure():
+        #     print("Executor FAIL - executor run (prima di creazione socket)")
+        #     sys.exit()  # simulo il fallimento
 
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -438,7 +450,6 @@ class Executor(object):
 
         if self.id == 0:
             if not self.isTokenCreated:
-
                 self.token = Token()
                 print('Token created')
                 self.isTokenCreated = True
@@ -450,13 +461,13 @@ class Executor(object):
             connection, client_address = sock.accept()
             print(f'Connected with Client {client_address[0]} : {client_address[1]}')
 
-            if self.check_failure():
-                print("Executor FAIL - executor run (prima di ricevere richiesta)")
-                sock.close()
-                if 'proc_req' in locals():
-                    proc_req.join()
-                worker.join()
-                sys.exit()  # simulo il fallimento
+            # if self.check_failure():
+            #     print("Executor FAIL - executor run (prima di ricevere richiesta)")
+            #     sock.close()
+            #     if 'proc_req' in locals():
+            #         proc_req.join()
+            #     worker.join()
+            #     sys.exit()  # simulo il fallimento
 
             #print('Receiving data from client...')
             data = connection.recv(4096)      # Receiving message
@@ -469,28 +480,18 @@ class Executor(object):
 
             #thread.join()
 
-            if threadError:      # if thread fail, the executor must fail (thread fail because of a simulate fault)
-                #sock.close()           # close socket otherwise error when bind again (when executor re-join)
-                proc_req.join()
-                worker.join()
-                sys.exit()           # if thread exit means the failure occurs, the executor thread must exit too
+            # if threadError:      # if thread fail, the executor must fail (thread fail because of a simulate fault)
+            #     #sock.close()           # close socket otherwise error when bind again (when executor re-join)
+            #     proc_req.join()
+            #     worker.join()
+            #     sys.exit()           # if thread exit means the failure occurs, the executor thread must exit too
 
 
-def executor_fail(f):
-    f.set()             # set to True flag di Event, significa che c'è stato un fail
+# def executor_fail(f):
+#     f.set()             # set to True flag di Event, significa che c'è stato un fail
 
 
 if __name__ == '__main__':
-    # #my_host = input("which is my host? ")
-    # my_host = '127.0.0.1'
-    # my_port = int(input("which is my port? "))
-    # #my_port = 8881
-    # my_id = int(input("Which is my id?"))
-    # #my_id = 0
-    # next_executor_ip = input("Next Executor IP?")
-    # next_executor_port = int(input("Next Executor port?"))
-    # executor = Executor(my_host=my_host, my_port=my_port, id=my_id, next_ex_host=next_executor_ip, next_ex_port=next_executor_port)
-    # executor.run()
 
     # Create the network
     my_host = '127.0.0.1'
@@ -512,21 +513,23 @@ if __name__ == '__main__':
         executor = Executor(my_host=my_host, my_port=8883, id=my_id, next_ex_host=my_host,
                             next_ex_port=8881)
 
-    if os.path.isfile('executor' + str(my_id) + '.pkl'):            # remove backup of old execution
-        os.remove('executor' + str(my_id) + '.pkl')
+    executor.run()
 
-    fail = threading.Event()  # event shared with the master thread (notify when a fail occurs)
-
-    while True:
-        threadError = False     # True se ci sono fallimenti nei thread (sys.exit nei thread termina solo il thread e non il main_thread)
-
-        threading.Timer(random.randint(20, 60), function=executor_fail, args=(fail,)).start()     # dopo un intervallo di tempo random esegue la funzione che dice che c'è stato un fail nell'executor
-
-        exec = threading.Thread(target=executor.run, name='Executor')          # parte l'executor (o per la prima volta, o dopo un crash)
-        exec.start()
-
-        exec.join()            # aspetto che avvenga un fallimento
-
-        fail.clear()        # Event flag set to False
+    # if os.path.isfile('executor' + str(my_id) + '.pkl'):            # remove backup of old execution
+    #     os.remove('executor' + str(my_id) + '.pkl')
+    #
+    # fail = threading.Event()  # event shared with the master thread (notify when a fail occurs)
+    #
+    # while True:
+    #     threadError = False     # True se ci sono fallimenti nei thread (sys.exit nei thread termina solo il thread e non il main_thread)
+    #
+    #     threading.Timer(random.randint(20, 60), function=executor_fail, args=(fail,)).start()     # dopo un intervallo di tempo random esegue la funzione che dice che c'è stato un fail nell'executor
+    #
+    #     exec = threading.Thread(target=executor.run, name='Executor')          # parte l'executor (o per la prima volta, o dopo un crash)
+    #     exec.start()
+    #
+    #     exec.join()            # aspetto che avvenga un fallimento
+    #
+    #     fail.clear()        # Event flag set to False
 
 
