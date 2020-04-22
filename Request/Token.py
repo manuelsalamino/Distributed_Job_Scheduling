@@ -53,7 +53,7 @@ class Token(Request):
         num_jobs_to_forward = {}   # {'ip:port' : n_job_to_be_forwarded} Indica l'address del server a cui mandare tot jobs
         curr_df = self.df[~self.df['n_jobs'].isna()]
         if curr_df.shape[0] > 1:
-            mean = int(np.floor(np.mean(curr_df['n_jobs'].values)))
+            mean = int(np.ceil(np.mean(curr_df['n_jobs'].values)))
             curr_df['residual'] = curr_df['n_jobs'].apply(lambda x: x - mean)
 
             res = curr_df.loc[host_id, 'residual']
@@ -62,7 +62,7 @@ class Token(Request):
                 return {}
 
             curr_df = curr_df.drop(host_id) # Drop the row corresponding to itself
-            curr_df = curr_df[curr_df['residual'] < 0].sort_values(by='residual', ascending=False)
+            curr_df = curr_df[curr_df['residual'] < 0].sort_values(by='residual', ascending=True)
 
             for idx, h, r in zip(curr_df.index, curr_df.host, curr_df.residual):
                 if res + r <= 0:                # è res + r e non res - r perché r è già negativo

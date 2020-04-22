@@ -3,6 +3,7 @@ import threading
 import pickle
 import random
 import time
+import sys
 from Job import Job
 from Request.JobRequest import JobRequest
 from Request.ResultRequest import ResultRequest
@@ -108,11 +109,12 @@ class Client(threading.Thread):
 
 if __name__ == '__main__':
     #server_host = input("what is server's host? ")
-    server_host = '127.0.0.1'
-    server_port = int(input("what is server's port?"))
+    #server_host = '192.168.1.4'
+    #server_port = int(input("what is server's port?"))
     #server_port = 8882
     #n_jobs = int(input("How many jobs?"))
     n_jobs = 15
+    server_host, server_port = sys.argv[1], sys.argv[2]
 
     sender = Client(server_host, server_port, n_jobs)
     sender.start()

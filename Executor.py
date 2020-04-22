@@ -493,7 +493,7 @@ class Executor(object):
 if __name__ == '__main__':
 
     # Create the network
-    my_host = '127.0.0.1'
+    my_host = '192.168.1.4'
     #my_id = int(input("Which is my id?"))
     #my_id = 1
 
@@ -505,7 +505,7 @@ if __name__ == '__main__':
                             next_ex_port=8882)
 
     if my_id == 1:
-        executor = Executor(my_host=my_host, my_port=8882, id=my_id, next_ex_host=my_host,
+        executor = Executor(my_host=my_host, my_port=8882, id=my_id, next_ex_host='192.168.1.9',
                             next_ex_port=8883)
 
     if my_id == 2:
@@ -513,7 +513,7 @@ if __name__ == '__main__':
                             next_ex_port=8884)
 
     if my_id == 3:
-        executor = Executor(my_host=my_host, my_port=8884, id=my_id, next_ex_host=my_host,
+        executor = Executor(my_host=my_host, my_port=8884, id=my_id, next_ex_host='192.168.1.4',
                             next_ex_port=8881)
 
     executor.run()
