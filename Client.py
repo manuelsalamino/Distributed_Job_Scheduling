@@ -109,10 +109,10 @@ class Client(threading.Thread):
 if __name__ == '__main__':
     #server_host = input("what is server's host? ")
     server_host = '127.0.0.1'
-    #server_port = int(input("what is server's port?"))
-    server_port = 8882
+    server_port = int(input("what is server's port?"))
+    #server_port = 8882
     #n_jobs = int(input("How many jobs?"))
-    n_jobs = 10
+    n_jobs = 15
 
     sender = Client(server_host, server_port, n_jobs)
     sender.start()

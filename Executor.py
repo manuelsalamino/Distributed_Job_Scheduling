@@ -25,8 +25,6 @@ class Executor(object):
     """
 
     """
-        - Executor Fail e non riparte
-        - Address Already in use
         - del self.running_jobs[job_id]
     """
 
@@ -211,7 +209,6 @@ class Executor(object):
 
         self.token = None
         self.save_state()
-        print('Token = None')
         token_sock.close()
 
     def handle_forwardedJob(self, dict_of_jobs):
@@ -219,7 +216,6 @@ class Executor(object):
         for k, v in dict_of_jobs.items():
             self.waiting_jobs[k] = v
 
-        self.save_state()           # TODO probabilmente questo va dopo l'invio dell'ACK
         print(f'\tAfter receive jobs: {self.waiting_jobs.keys()}')
         return 'ACK: jobs_forwarded'  # ACK
 
@@ -268,12 +264,14 @@ class Executor(object):
             print('\trequest: reiceved forwarded job')
             message = self.handle_forwardedJob(request.get_forwarding_job())
             connection.send(message.encode(ENCODING))  # ACK message
+            self.save_state()
             connection.close()
 
         if request_type == 'sendResult':
             print('\trequest: reiceved result from forwarded job')
             message = self.handle_sendResult(request)
             connection.send(message.encode(ENCODING)) # ACK message
+            self.save_state()
             connection.close()
 
         # except (SystemExit, ConnectionError):
@@ -285,7 +283,7 @@ class Executor(object):
         print(f'\t{len(self.waiting_jobs)} waiting job(s): {self.waiting_jobs.keys()}\n')
 
     def process_job(self):
-        global threadError
+        # global threadError
         while True:
             #print(f"worker thread {threading.current_thread().ident} attivo!")
 
@@ -361,6 +359,7 @@ class Executor(object):
                 if self.return_res_job:
                     self.return_res_forwarded_job(self.return_res_job)
                     self.return_res_job = None
+                    self.save_state()
 
                 print(f'\tJob: {job_id} completed --> Result : {job.get_final_result()}')
 
@@ -511,6 +510,10 @@ if __name__ == '__main__':
 
     if my_id == 2:
         executor = Executor(my_host=my_host, my_port=8883, id=my_id, next_ex_host=my_host,
+                            next_ex_port=8884)
+
+    if my_id == 3:
+        executor = Executor(my_host=my_host, my_port=8884, id=my_id, next_ex_host=my_host,
                             next_ex_port=8881)
 
     executor.run()
