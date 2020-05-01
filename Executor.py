@@ -19,9 +19,6 @@ class Executor(object):
         - Accettare le richieste del Client
         - Ricevere e processare (eventualmente inviare jobs) il token
         - Eseguire un job
-        
-        - Un quarto thread potrebbe gestire il salvataggio delle informazioni in un file per la Fault Tolerance: 
-            credo si possa supporre che mentre questo salvataggio è in atto, il server non possa fallire
     """
 
     """
@@ -80,7 +77,6 @@ class Executor(object):
             job.set_status('waiting')
 
             self.waiting_jobs[job_id] = job
-            self.save_state()          # salvo lo stato solo se il job è stato inserito in waiting_jobs
 
         message = str(job_id)     # the message is the job_id of the received job
 
@@ -110,7 +106,6 @@ class Executor(object):
 
     def handle_token(self, request):
         print('\nToken received')
-
         """
         Fault Tolerance: 
         - Il token venga inviato correttamente
@@ -243,6 +238,7 @@ class Executor(object):
             print('\trequest: new job')
             message = self.handle_jobRequest(request)
             connection.send(message.encode(ENCODING))
+            self.save_state()
             # connection.close()
 
         if request_type == "resultRequest":
@@ -310,7 +306,6 @@ class Executor(object):
                         #print('Process_job releases lock')
 
                     # SUPPONGO CHE QUANDO SPOSTO UN JOB DA waiting_jobs A running_jobs NON HO FALLIMENTI NEL FRATTEMPO
-                    # TODO se voglio check_fail nel mezzo faccio: leggo da waiting-scrivo in running-rimuovo da waiting
 
                     self.running_job[job_id] = job              # sposto il job
                     print(f'\n\tExecuting job: {job_id}\n')        # print job_id
@@ -493,7 +488,8 @@ class Executor(object):
 if __name__ == '__main__':
 
     # Create the network
-    my_host = '192.168.1.4'
+    #my_host = '192.168.1.4'
+    my_host = 'localhost'
     #my_id = int(input("Which is my id?"))
     #my_id = 1
 
@@ -505,7 +501,7 @@ if __name__ == '__main__':
                             next_ex_port=8882)
 
     if my_id == 1:
-        executor = Executor(my_host=my_host, my_port=8882, id=my_id, next_ex_host='192.168.1.9',
+        executor = Executor(my_host=my_host, my_port=8882, id=my_id, next_ex_host=my_host,
                             next_ex_port=8883)
 
     if my_id == 2:
@@ -513,7 +509,7 @@ if __name__ == '__main__':
                             next_ex_port=8884)
 
     if my_id == 3:
-        executor = Executor(my_host=my_host, my_port=8884, id=my_id, next_ex_host='192.168.1.4',
+        executor = Executor(my_host=my_host, my_port=8884, id=my_id, next_ex_host=my_host,
                             next_ex_port=8881)
 
     executor.run()
