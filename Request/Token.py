@@ -1,4 +1,6 @@
 import pandas as pd
+pd.options.mode.chained_assignment = None     # avoid showing warning
+
 from Request.Request import Request
 import random
 import numpy as np
@@ -49,8 +51,20 @@ class Token(Request):
                 print(self.df)
                 return {}
 
+            #print("mean ", mean, ",    n_hosts ", len(curr_df['host']))
+            tot_jobs_ceil = mean*len(curr_df['host'])
+            #print("total ", tot_jobs_ceil)
+            tot_jobs = np.sum(curr_df['n_jobs'])
+            #print("tot_jobs ", tot_jobs)
+
             curr_df = curr_df.drop(host_id) # Drop the row corresponding to itself
             curr_df = curr_df[curr_df['residual'] < 0].sort_values(by='residual', ascending=True)
+
+            if tot_jobs != tot_jobs_ceil:
+                extra = tot_jobs_ceil - tot_jobs
+                #print("jobs extra:", extra)
+                for i in range(extra):
+                    curr_df['residual'].iloc[i] += 1
 
             for idx, h, r in zip(curr_df.index, curr_df.host, curr_df.residual):
                 if res + r <= 0:                # è res + r e non res - r perché r è già negativo
