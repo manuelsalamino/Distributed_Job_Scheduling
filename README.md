@@ -5,7 +5,7 @@ Executors communicate and coordinate among themselves in order to share load suc
 Use stable storage to cope with failures of Executors.
 
 <p align="center">
-    <img src="https://i.imgur.com/1nYc0HV.png" alt="Ring"/>
+    <img width="650" src="https://i.imgur.com/1nYc0HV.png" alt="Ring"/>
 </p>
 
 ## Our choices
@@ -14,7 +14,7 @@ We have decided to deploy the cluster of Executor as a **Ring Structure**, in or
 The Token, passing through the Executors, manage the *load balancing* by updating an internal dataframe which has a report about the number of jobs (executing and waiting) of each Executor.
 
 <p align="center">
-    <img src="https://i.imgur.com/eGJ1wVL.png" alt="Token"/>
+    <img width="600" src="https://i.imgur.com/eGJ1wVL.png" alt="Token"/>
 </p>
 
 Consulting this dataframe the Token is able to manage load balancing by telling to an Executor if it has to send jobs other Executors, and eventually to which one. If job(s) forward is needed, the two Executors establish a connection usign Pyhthon Socket, the recipient add the received job(s) to its waiting list (or directly executes the first one) and only when the result of a job is  computed it is sent to the sender. In this way we have, again, message exchange reduction because the sender never asks for the forwarded job status.
