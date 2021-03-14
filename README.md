@@ -29,3 +29,7 @@ In order to simulate *failures* we create a bash script (each machine will execu
 ## Demo
 The Demo version that you can find executing the above code is composed by two Machines, each one of them must execute a bash script, and so each machine has two Executors and one Client.
 The messages recipients are set by default in order to show that the connection between components of the same, or different, machine works in the right way.
+
+## Team Members
+* [Alessio Russo Introito](https://github.com/russointroitoa)
+* [Manuel Salamino](https://github.com/manuelsalamino)
