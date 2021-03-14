@@ -4,9 +4,20 @@ Implement an infrastructure to manage jobs submitted to a cluster of Executors. 
 Executors communicate and coordinate among themselves in order to share load such that at each time every Executor is running the same number of jobs (or a number as close as possible to that). Assume links are reliable but processes (i.e., Executors) may fail (and resume back, re-joining the system immediately after).
 Use stable storage to cope with failures of Executors.
 
+<p align="center">
+    <img src="https://i.imgur.com/1nYc0HV.png" alt="Ring"/>
+</p>
+
 ## Our choices
 We implement the infrastructure in Python, using Python Socket to have Client-Executor and Executor-Executor communications.
-We have decided to deploy the cluster of Executor as a **Ring Structure**, in order to **reduce message exchange**. The Token, passing through the Executors, manage the *load balancing* by updating an internal dataframe which has a report about the number of jobs (executing and waiting) of each Executor. Consulting this dataframe the Token is able to manage load balancing by telling to an Executor if it has to send jobs other Executors, and eventually to which one. If job(s) forward is needed, the two Executors establish a connection usign Pyhthon Socket, the recipient add the received job(s) to its waiting list (or directly executes the first one) and only when the result of a job is  computed it is sent to the sender. In this way we have, again, message exchange reduction because the sender never asks for the forwarded job status.
+We have decided to deploy the cluster of Executor as a **Ring Structure**, in order to **reduce message exchange**.
+The Token, passing through the Executors, manage the *load balancing* by updating an internal dataframe which has a report about the number of jobs (executing and waiting) of each Executor.
+
+<p align="center">
+    <img src="https://i.imgur.com/eGJ1wVL.png" alt="Token"/>
+</p>
+
+Consulting this dataframe the Token is able to manage load balancing by telling to an Executor if it has to send jobs other Executors, and eventually to which one. If job(s) forward is needed, the two Executors establish a connection usign Pyhthon Socket, the recipient add the received job(s) to its waiting list (or directly executes the first one) and only when the result of a job is  computed it is sent to the sender. In this way we have, again, message exchange reduction because the sender never asks for the forwarded job status.
 
 To manage **fault tolerance** we use **at least once** semantic: *messages may be duplicated, but not lost*. In fact every time there is a connection (Client-Executor or Executor-Executor) the sender always wait for an ACK from the receiver; we set a *timeout timer* and if the ACK if not received the sender send again the message.
 
